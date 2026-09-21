@@ -3,7 +3,7 @@ import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=202609
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = { user: null, albums: [], albumId: '', files: [], hasMore: false, selectedFiles: new Set(), uploading: false, importing: false, rawJson: '', jsonName: '', links: [], replacements: new Map(), application: null };
+  const state = { user: null, albums: [], albumId: '', files: [], hasMore: false, selectedFiles: new Set(), uploading: false, importing: false, rawJson: '', jsonName: '', themeTitle: '', importAlbumId: '', links: [], replacements: new Map(), application: null };
   const fmt = n => n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1024).toFixed(1)} KB`;
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
   const progress = document.createElement('div');
@@ -35,6 +35,8 @@ import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=202609
     $('select-all-files').disabled = state.files.length === 0 || count === state.files.length;
     $('clear-selected-files').disabled = count === 0;
     $('copy-selected-files').disabled = count === 0;
+    $('move-selected-files').disabled = count === 0 || !$('move-target').value;
+    $('delete-selected-files').disabled = count === 0;
     const order = [...state.selectedFiles];
     $('file-grid').querySelectorAll('[data-select]').forEach(button => {
       const number = order.indexOf(button.dataset.select) + 1;
@@ -52,7 +54,7 @@ import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=202609
     const limit = creator ? u.creatorMonthLimit : u.baseLimit;
     const month = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 7);
     const used = creator && u.monthKey === month ? u.monthUploadedBytes : creator ? 0 : u.storedBytes;
-    $('tier-description').textContent = superUser ? '超级无敌美化大师丘 ✦ 站长专属授权，可上传任意类型文件，站内不设额度。' : creator ? '皮卡丘 ♡ 每月可上传 1 GB，旧图永久保留。' : '皮丘 ✿ 总共可保存 100 MB，图片永久保留。';
+    $('tier-description').textContent = superUser ? '超级无敌美化大师丘 ✦ 站长专属授权，可上传任意类型文件，站内不设额度。' : creator ? '皮卡丘 ♡ 每月可上传 1 GB，旧图永久保留。' : '皮丘 ✿ 总共可保存 200 MB，图片永久保留。';
     $('quota-label').textContent = superUser ? '已保存文件' : creator ? '本月上传额度' : '当前存储额度';
     $('quota-value').textContent = superUser ? fmt(u.storedBytes) : `${fmt(used)} / ${fmt(limit)}`;
     $('quota-bar').style.width = superUser ? '100%' : `${Math.min(100, 100 * used / limit)}%`;
@@ -69,6 +71,13 @@ import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=202609
   function renderAlbums() {
     $('album-list').innerHTML = state.albums.map(a => `<button class="album-item ${a.id === state.albumId ? 'active' : ''}" data-id="${escapeHtml(a.id)}">✿ ${escapeHtml(a.name)} <small>${a.file_count}</small></button>`).join('');
     $('current-album-name').textContent = state.albums.find(a => a.id === state.albumId)?.name || '我的相册';
+    const target = $('move-target');
+    const previous = target.value;
+    const others = state.albums.filter(a => a.id !== state.albumId);
+    target.innerHTML = `<option value="">${others.length ? '移到哪个相册？' : '先新建另一个相册'}</option>${others.map(a => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join('')}`;
+    target.value = others.some(a => a.id === previous) ? previous : '';
+    target.disabled = others.length === 0;
+    renderSelection();
   }
   function renderFiles() {
     const previewTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
@@ -83,7 +92,27 @@ import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=202609
     renderAlbums(); await refreshFiles();
   }
   async function refreshFiles(more = false) { if (!more) state.selectedFiles.clear(); if (!state.albumId) { state.files = []; state.hasMore = false; renderFiles(); return; } const offset = more ? state.files.length : 0; const data = await api(`files?album=${encodeURIComponent(state.albumId)}&offset=${offset}`); state.files = more ? [...state.files, ...data.files] : data.files; state.hasMore = data.hasMore; renderFiles(); }
+  async function loadAnnouncement() {
+    const { announcement } = await api('announcement');
+    const news = announcement || {};
+    $('announcement-open').classList.toggle('has-news', !!news.enabled);
+    $('announcement-title').textContent = news.enabled ? news.title || '甜品屋公告' : '暂时没有公告 ✿';
+    $('announcement-content').textContent = news.enabled ? news.content || '来甜品屋玩吧 ♡' : '站长还没有发布新公告。';
+    $('announcement-dialog').style.backgroundColor = news.backgroundColor || '#fff8f2';
+    $('announcement-dialog').style.color = news.textColor || '#604c56';
+    const gallery = $('announcement-images');
+    gallery.replaceChildren();
+    for (const url of news.enabled ? news.imageUrls || [] : []) {
+      const image = document.createElement('img');
+      image.src = url;
+      image.alt = '公告图片';
+      image.loading = 'lazy';
+      image.referrerPolicy = 'no-referrer';
+      gallery.append(image);
+    }
+  }
   async function start() {
+    try { await loadAnnouncement(); } catch { /* The rest of the site remains usable if news is unavailable. */ }
     try { const c = await api('config'); $('discord-login').classList.toggle('disabled', !c.discordEnabled); $('discord-login').href = c.discordEnabled ? '/api/studio/oauth/start' : '#'; $('discord-hint').textContent = c.discordEnabled ? '请先加入管理员指定的 Discord 社区。' : '站长尚未填写 Discord 应用和社区 ID；可使用管理员发放的账号。'; } catch (e) { $('discord-hint').textContent = e.message; }
     const error = new URLSearchParams(location.search).get('error'); if (error === 'not_member') { notice('这个 Discord 账号尚未加入指定社区，暂时不能登录。', true); history.replaceState(null, '', '/studio/'); }
     try { await refreshProfile(); await refreshAlbums(); } catch { state.user = null; showMember(); }
@@ -91,6 +120,9 @@ import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=202609
   $('local-login').addEventListener('submit', async event => { event.preventDefault(); const b = event.currentTarget.querySelector('button'); b.disabled = true; try { const form = new FormData(event.currentTarget); const data = await api('login', jsonOptions({ username: form.get('username'), password: form.get('password') })); state.user = data.user; await refreshProfile(); await refreshAlbums(); event.currentTarget.reset(); notice('欢迎回家 ♡'); } catch (e) { notice(e.message, true); } finally { b.disabled = false; } });
   $('logout').addEventListener('click', async () => { try { await api('logout', { method: 'POST' }); state.user = null; showMember(); notice('下次再来玩呀 ♡'); } catch (e) { notice(e.message, true); } });
   $('new-album').addEventListener('click', () => $('album-dialog').showModal());
+  $('announcement-open').addEventListener('click', () => $('announcement-dialog').showModal());
+  $('announcement-close').addEventListener('click', () => $('announcement-dialog').close());
+  $('announcement-done').addEventListener('click', () => $('announcement-dialog').close());
   $('album-form').addEventListener('submit', async event => { if (event.submitter?.value !== 'create') return; event.preventDefault(); try { const data = await api('albums', jsonOptions({ name: $('album-name').value })); $('album-dialog').close(); $('album-name').value = ''; state.albumId = data.id; await refreshAlbums(); notice('新相册已经摆好啦 ✿'); } catch (e) { notice(e.message, true); } });
   $('album-list').addEventListener('click', async event => { const button = event.target.closest('[data-id]'); if (!button) return; state.albumId = button.dataset.id; renderAlbums(); await refreshFiles(); });
   $('more-files').addEventListener('click', async () => { try { await refreshFiles(true); } catch (e) { notice(e.message, true); } });
@@ -181,6 +213,38 @@ import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=202609
   $('select-all-files').addEventListener('click', () => { state.files.forEach(file => state.selectedFiles.add(file.id)); renderSelection(); });
   $('clear-selected-files').addEventListener('click', () => { state.selectedFiles.clear(); renderSelection(); });
   $('copy-selected-files').addEventListener('click', async () => { const byId = new Map(state.files.map(file => [file.id, file.url])); const links = [...state.selectedFiles].map(id => byId.get(id)).filter(Boolean); if (!links.length) return; try { await navigator.clipboard.writeText(links.join('\n')); notice(`已复制 ${links.length} 条图链，每行一条 ✿`); } catch { notice('复制失败，请检查浏览器的剪贴板权限', true); } });
+  $('move-target').addEventListener('change', renderSelection);
+  $('move-selected-files').addEventListener('click', async () => {
+    const ids = [...state.selectedFiles];
+    const albumId = $('move-target').value;
+    if (!ids.length || !albumId) return;
+    const target = state.albums.find(album => album.id === albumId);
+    const button = $('move-selected-files');
+    button.disabled = true;
+    try {
+      for (let start = 0; start < ids.length; start += 100) await api('files/move', jsonOptions({ ids: ids.slice(start, start + 100), albumId }));
+      await refreshAlbums();
+      notice(`已把 ${ids.length} 个文件移到「${target.name}」；图链没有改变 ✿`);
+    } catch (e) { notice(e.message, true); }
+    finally { renderSelection(); }
+  });
+  $('delete-selected-files').addEventListener('click', async () => {
+    const ids = [...state.selectedFiles];
+    if (!ids.length || !confirm(`确定删除选中的 ${ids.length} 个文件吗？删除后图链会失效，无法恢复。`)) return;
+    const button = $('delete-selected-files');
+    button.disabled = true;
+    let deleted = 0;
+    const failures = [];
+    for (const id of ids) {
+      $('upload-status').textContent = `正在删除 ${deleted + failures.length + 1} / ${ids.length} 个文件…`;
+      try { await api(`files/${encodeURIComponent(id)}`, { method: 'DELETE' }); deleted++; }
+      catch (e) { failures.push(e.message); }
+    }
+    try { await Promise.all([refreshProfile(), refreshAlbums()]); }
+    catch (e) { failures.push(`刷新失败：${e.message}`); }
+    $('upload-status').textContent = `已删除 ${deleted} / ${ids.length} 个文件${failures.length ? `；${failures[0]}` : ' ♡'}`;
+    renderSelection();
+  });
   $('file-grid').addEventListener('click', async event => {
     const select = event.target.closest('[data-select]');
     if (select) {
@@ -247,33 +311,39 @@ import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=202609
     if (state.importing) return notice('请等当前图片搬运完成后再选择文件', true);
     if (!file || !file.name.toLowerCase().endsWith('.json')) return notice('请选择 .json 美化文件', true);
     if (file.size > 5 * 1048576) return notice('JSON 文件不能超过 5 MB', true);
-    try { const raw = await file.text(); state.links = imageLinks(raw); const theme = JSON.parse(raw); if (!theme || typeof theme !== 'object' || Array.isArray(theme)) throw new Error('Invalid theme'); state.rawJson = raw; state.jsonName = file.name; state.replacements.clear(); $('json-file-name').textContent = file.name; $('json-output-name').value = `${String(theme.name || file.name.replace(/\.json$/i, '')).trim()}-已搬家`; $('json-output-name').disabled = false; $('theme-results').classList.remove('hidden'); $('theme-count').textContent = `发现 ${state.links.length} 条不同的图片链接`;
+    try { const raw = await file.text(); state.links = imageLinks(raw); const theme = JSON.parse(raw); if (!theme || typeof theme !== 'object' || Array.isArray(theme)) throw new Error('Invalid theme'); state.rawJson = raw; state.jsonName = file.name; state.themeTitle = (typeof theme.name === 'string' ? theme.name.trim() : '') || file.name.replace(/\.json$/i, ''); state.importAlbumId = ''; state.replacements.clear(); $('json-file-name').textContent = file.name; $('json-output-name').value = `${state.themeTitle}-已搬家`; $('json-output-name').disabled = false; $('theme-results').classList.remove('hidden'); $('theme-count').textContent = `发现 ${state.links.length} 条不同的图片链接`;
       $('theme-links').innerHTML = state.links.map((url, i) => `<div class="link-row" id="link-${i}">${escapeHtml(url)}</div>`).join('') || '<div class="hint">没有识别到带图片扩展名的链接。</div>';
       $('theme-progress').textContent = '图片不会被压缩。搬运前请确认你有权保存这些图片。'; $('import-all').disabled = state.links.length === 0; $('download-json').disabled = true; $('clear-json').disabled = false;
     } catch { notice('JSON 文件格式不正确，无法解析', true); }
   }
   $('json-input').addEventListener('change', event => { loadJson(event.target.files[0]); event.target.value = ''; });
-  $('clear-json').addEventListener('click', () => { if (state.importing) return; state.links = []; state.rawJson = ''; state.jsonName = ''; state.replacements.clear(); $('json-input').value = ''; $('json-file-name').textContent = '还没有选择文件'; $('json-output-name').value = ''; $('json-output-name').disabled = true; $('theme-results').classList.add('hidden'); $('theme-links').replaceChildren(); $('theme-count').textContent = ''; $('theme-progress').textContent = ''; $('import-all').disabled = true; $('download-json').disabled = true; $('clear-json').disabled = true; });
+  $('clear-json').addEventListener('click', () => { if (state.importing) return; state.links = []; state.rawJson = ''; state.jsonName = ''; state.themeTitle = ''; state.importAlbumId = ''; state.replacements.clear(); $('json-input').value = ''; $('json-file-name').textContent = '还没有选择文件'; $('json-output-name').value = ''; $('json-output-name').disabled = true; $('theme-results').classList.add('hidden'); $('theme-links').replaceChildren(); $('theme-count').textContent = ''; $('theme-progress').textContent = ''; $('import-all').disabled = true; $('download-json').disabled = true; $('clear-json').disabled = true; });
   $('json-drop').addEventListener('dragover', event => { event.preventDefault(); event.currentTarget.style.background = '#f9dae7'; });
   $('json-drop').addEventListener('dragleave', event => { event.currentTarget.style.background = ''; });
   $('json-drop').addEventListener('drop', event => { event.preventDefault(); event.currentTarget.style.background = ''; loadJson(event.dataTransfer.files[0]); });
   $('import-all').addEventListener('click', async () => {
-    if (!state.albumId) return notice('请先创建相册', true);
+    if (!state.rawJson || !state.links.length) return notice('请先选择含图片链接的美化 JSON', true);
     if (state.importing) return;
     state.importing = true;
     const button = $('import-all');
     button.disabled = true;
     $('clear-json').disabled = true;
-    let success = 0;
+    let success = state.replacements.size;
     try {
+      if (!state.importAlbumId) {
+        const created = await api('albums', jsonOptions({ name: state.themeTitle.slice(0, 80) || '搬家美化' }));
+        state.importAlbumId = created.id;
+        state.albumId = created.id;
+      }
       for (let i = 0; i < state.links.length; i++) {
         const link = state.links[i];
         const row = $(`link-${i}`);
+        if (state.replacements.has(link)) continue;
         $('theme-progress').textContent = `正在搬运 ${i + 1} / ${state.links.length}：${link}`;
-        try { const data = await api('import-image', jsonOptions({ url: link, albumId: state.albumId })); state.replacements.set(link, data.url); row.classList.add('done'); row.textContent = `✓ ${link} → ${data.url}`; success++; }
+        try { const data = await api('import-image', jsonOptions({ url: link, albumId: state.importAlbumId })); state.replacements.set(link, data.url); row.classList.add('done'); row.textContent = `✓ ${link} → ${data.url}`; success++; }
         catch (e) { row.classList.add('failed'); row.textContent = `✗ ${link}：${e.message}`; }
       }
-      $('theme-progress').textContent = `完成：${success} / ${state.links.length} 张图片已保存。失败的链接会留在原位。`;
+      $('theme-progress').textContent = `完成：${success} / ${state.links.length} 张图片已保存到「${state.themeTitle}」相册。失败的链接会留在原位。`;
       $('download-json').disabled = success === 0;
       await Promise.all([refreshProfile(), refreshAlbums()]);
     } catch (e) { $('theme-progress').textContent = `搬运后刷新失败：${e.message}`; }

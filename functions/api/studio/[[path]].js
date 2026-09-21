@@ -3,7 +3,7 @@ import { addFileToIndex, removeFileFromIndex } from '../../utils/indexManager.js
 import { hashPassword, verifyPassword } from '../../utils/auth/passwordHash.js';
 import { validateSession } from '../../utils/auth/sessionManager.js';
 
-const BASE_LIMIT = 100 * 1024 * 1024;
+const BASE_LIMIT = 200 * 1024 * 1024;
 const CREATOR_MONTH_LIMIT = 1024 * 1024 * 1024;
 const SINGLE_FILE_LIMIT = 25 * 1024 * 1024;
 const MIN_PART_SIZE = 8 * 1024 * 1024;
@@ -14,6 +14,8 @@ const DEFAULT_GUILD_IDS = '1291925535324110879,1379304008157499423';
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
 const EXTENSIONS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif', 'image/bmp': 'bmp' };
 const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const ANNOUNCEMENT_KEY = 'manage@studio@announcement';
+const ANNOUNCEMENT_IMAGE_LIMIT = 5 * 1024 * 1024;
 
 const json = (data, status = 200, extra = {}) => new Response(JSON.stringify(data), {
   status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...extra }
@@ -29,6 +31,25 @@ const cleanName = s => String(s || '').replace(/[\r\n/\\<>:"|?*\x00-\x1f]/g, '_'
 const plain = s => String(s || '').trim();
 const safeUser = u => ({ id: u.id, username: u.username, discordId: u.discord_id, discordName: u.discord_name, accountType: u.account_type, tier: u.is_super ? 'super' : u.tier, storedBytes: u.stored_bytes, monthUploadedBytes: u.month_uploaded_bytes, monthKey: u.month_key, baseLimit: BASE_LIMIT, creatorMonthLimit: CREATOR_MONTH_LIMIT });
 const userSelect = 'SELECT u.*, EXISTS(SELECT 1 FROM studio_super_users su WHERE su.user_id=u.id) AS is_super FROM studio_users u';
+
+function announcementData(value = {}) {
+  return {
+    enabled: value.enabled === true,
+    title: String(value.title || '').trim().slice(0, 100),
+    content: String(value.content || '').trim().slice(0, 5000),
+    backgroundColor: /^#[0-9a-f]{6}$/i.test(value.backgroundColor) ? value.backgroundColor : '#fff8f2',
+    textColor: /^#[0-9a-f]{6}$/i.test(value.textColor) ? value.textColor : '#604c56',
+    imageUrls: Array.isArray(value.imageUrls) ? value.imageUrls.slice(0, 10).filter(url => {
+      try { const parsed = new URL(url); return parsed.protocol === 'https:' && !parsed.username && !parsed.password && url.length <= 1000; } catch { return false; }
+    }) : [],
+    updatedAt: value.updatedAt || ''
+  };
+}
+async function readAnnouncement(env) {
+  const saved = await getDatabase(env).get(ANNOUNCEMENT_KEY);
+  try { return announcementData(saved ? JSON.parse(saved) : {}); }
+  catch { return announcementData(); }
+}
 
 function dbOf(env) {
   if (!env.img_d1?.prepare) throw new Error('Studio requires a D1 binding named img_d1');
@@ -328,6 +349,19 @@ async function handleUser(context, db, user, route, method) {
     const page = rows.results || [];
     return json({ files: page.slice(0, 100).map(f => ({ ...f, url: `${new URL(request.url).origin}/file/${f.id}` })), hasMore: page.length > 100 });
   }
+  if (route === 'files/move' && method === 'POST') {
+    const data = await bodyJson(request);
+    const ids = data.ids;
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > 100 || ids.some(id => typeof id !== 'string' || id.length > 240) || new Set(ids).size !== ids.length) return fail('请选择 1–100 个文件');
+    const albumId = String(data.albumId || '');
+    const album = await db.prepare('SELECT id FROM studio_albums WHERE id=? AND user_id=?').bind(albumId, user.id).first();
+    if (!album) return fail('目标相册不存在', 404);
+    const placeholders = ids.map(() => '?').join(',');
+    const owned = await db.prepare(`SELECT count(*) n FROM studio_files WHERE user_id=? AND id IN (${placeholders})`).bind(user.id, ...ids).first();
+    if (owned.n !== ids.length) return fail('有文件不属于当前账号，请刷新相册后重试', 404);
+    await db.prepare(`UPDATE studio_files SET album_id=? WHERE user_id=? AND id IN (${placeholders})`).bind(albumId, user.id, ...ids).run();
+    return json({ ok: true, moved: ids.length });
+  }
   if (route === 'files' && method === 'POST') {
     if (Number(request.headers.get('Content-Length') || 0) > SINGLE_FILE_LIMIT + 65536) return fail('单张图片不能超过 25 MB', 413);
     const form = await request.formData();
@@ -394,6 +428,44 @@ async function handleAdmin(context, db, route, method) {
   const { env, request } = context;
   const admin = await validateSession(env, request, 'admin');
   if (!admin.valid) return fail('请先登录原图床管理后台', 401);
+  if (route === 'admin/announcement' && method === 'GET') return json({ announcement: await readAnnouncement(env) });
+  if (route === 'admin/announcement' && method === 'PATCH') {
+    const data = await bodyJson(request);
+    const announcement = announcementData({ ...data, updatedAt: new Date().toISOString() });
+    await getDatabase(env).put(ANNOUNCEMENT_KEY, JSON.stringify(announcement));
+    return json({ announcement });
+  }
+  if (route === 'admin/announcement/images' && method === 'POST') {
+    if (!env.img_r2?.put) return fail('R2 存储桶未绑定为 img_r2', 503);
+    if (Number(request.headers.get('Content-Length') || 0) > 4 * (ANNOUNCEMENT_IMAGE_LIMIT + 65536)) return fail('图片太大', 413);
+    const form = await request.formData();
+    const files = form.getAll('images');
+    if (!files.length || files.length > 4) return fail('一次请选择 1–4 张公告图片');
+    const prepared = [];
+    for (const file of files) {
+      if (typeof file.arrayBuffer !== 'function' || file.size < 1 || file.size > ANNOUNCEMENT_IMAGE_LIMIT) return fail('公告图片每张不能超过 5 MB');
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const type = actualImageType(bytes);
+      if (!type || !IMAGE_TYPES.has(type)) return fail('公告图片格式不受支持');
+      prepared.push({ bytes, type, name: cleanName(file.name) || `announcement.${EXTENSIONS[type]}` });
+    }
+    const saved = [];
+    try {
+      for (const file of prepared) {
+        const id = `studio/announcement/${shortObjectKey(EXTENSIONS[file.type]).slice(7)}`;
+        const metadata = studioMetadata(request, { id: 'admin' }, {}, file.name, file.type, file.bytes.byteLength);
+        metadata.Directory = 'studio/announcement/';
+        saved.push(id);
+        await env.img_r2.put(id, file.bytes, { httpMetadata: { contentType: file.type } });
+        await getDatabase(env).put(id, '', { metadata });
+        context.waitUntil(addFileToIndex(context, id, metadata));
+      }
+    } catch (error) {
+      await Promise.allSettled(saved.flatMap(id => [env.img_r2.delete(id), getDatabase(env).delete(id)]));
+      throw error;
+    }
+    return json({ urls: saved.map(id => `${new URL(request.url).origin}/file/${id}`) }, 201);
+  }
   if (route === 'admin/overview' && method === 'GET') {
     const [users, applications] = await Promise.all([
       db.prepare('SELECT u.id,u.username,u.discord_id,u.discord_name,u.account_type,u.tier,u.disabled,u.stored_bytes,u.month_key,u.month_uploaded_bytes,u.created_at,EXISTS(SELECT 1 FROM studio_super_users su WHERE su.user_id=u.id) AS is_super FROM studio_users u ORDER BY u.created_at DESC LIMIT 500').all(),
@@ -451,6 +523,7 @@ export async function onRequest(context) {
   try {
     const db = dbOf(env);
     if (route === 'config' && method === 'GET') return json({ discordEnabled: !!(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET), maxFileBytes: SINGLE_FILE_LIMIT });
+    if (route === 'announcement' && method === 'GET') return json({ announcement: await readAnnouncement(env) });
     if (route === 'oauth/start' && method === 'GET') return oauthStart(env, request);
     if (route === 'oauth/callback' && method === 'GET') return oauthCallback(env, db, request);
     if (route === 'login' && method === 'POST') return login(db, request);
