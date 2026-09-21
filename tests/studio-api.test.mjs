@@ -48,8 +48,10 @@ test('local account, album, original upload, application review, and delete', as
   assert.equal(files.data.files.length, 1);
   const profile = await call(env, 'me', 'GET', null, userCookie);
   assert.equal(profile.data.user.storedBytes, png.byteLength);
-  const application = await call(env, 'applications', 'POST', { discordId: '123456789012345678', workTitle: '金错刀' }, userCookie);
+  const application = await call(env, 'applications', 'POST', { discordId: '7', workTitle: '像素甜点屋', workUrl: '作品还没发布网址' }, userCookie);
   assert.equal(application.response.status, 201);
+  assert.equal(sqlite.prepare('SELECT discord_id,work_title,work_url FROM studio_applications').get().discord_id, '7');
+  assert.equal(sqlite.prepare('SELECT work_url FROM studio_applications').get().work_url, '作品还没发布网址');
   const approved = await call(env, `admin/applications/${application.data.id}`, 'POST', { decision: 'approved' }, adminCookie);
   assert.equal(approved.response.status, 200);
   const upgraded = await call(env, 'me', 'GET', null, userCookie);

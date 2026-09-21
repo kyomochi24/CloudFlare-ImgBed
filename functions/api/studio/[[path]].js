@@ -264,12 +264,7 @@ async function handleUser(context, db, user, route, method) {
     const title = plain(data.workTitle).slice(0, 120);
     const workUrl = plain(data.workUrl).slice(0, 500);
     const note = plain(data.note).slice(0, 1000);
-    if (!/^\d{15,25}$/.test(discordId) || !title) return fail('请填写 Discord ID 和作品名称');
-    if (workUrl) {
-      try { const u = new URL(workUrl); if (u.protocol !== 'https:' || u.username || u.password) return fail('作品链接必须是 HTTPS 地址'); }
-      catch { return fail('作品链接格式不正确'); }
-    }
-    if (user.discord_id && user.discord_id !== discordId) return fail('Discord ID 必须与你的授权账号一致');
+    if (!/^\d+$/.test(discordId) || !title) return fail('请填写数字 Discord ID 和作品名称');
     const pending = await db.prepare("SELECT id FROM studio_applications WHERE user_id=? AND status='pending'").bind(user.id).first();
     if (pending) return fail('已有待审核申请', 409);
     const id = uid();
