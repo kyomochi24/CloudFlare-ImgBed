@@ -6,6 +6,9 @@ import { validateSession } from '../../utils/auth/sessionManager.js';
 const BASE_LIMIT = 100 * 1024 * 1024;
 const CREATOR_MONTH_LIMIT = 1024 * 1024 * 1024;
 const SINGLE_FILE_LIMIT = 25 * 1024 * 1024;
+const MIN_PART_SIZE = 8 * 1024 * 1024;
+const MAX_PART_SIZE = 80 * 1024 * 1024;
+const MAX_PARTS = 10000;
 const SESSION_SECONDS = 7 * 86400;
 const DEFAULT_GUILD_IDS = '1291925535324110879,1379304008157499423';
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
@@ -22,7 +25,8 @@ const cookie = (token, age = SESSION_SECONDS) => `studio_session=${token}; Path=
 const getCookie = (request, key) => request.headers.get('Cookie')?.split(';').map(s => s.trim()).find(s => s.startsWith(`${key}=`))?.slice(key.length + 1) || '';
 const cleanName = s => String(s || '').replace(/[\r\n/\\<>:"|?*\x00-\x1f]/g, '_').trim().slice(0, 100);
 const plain = s => String(s || '').trim();
-const safeUser = u => ({ id: u.id, username: u.username, discordId: u.discord_id, discordName: u.discord_name, accountType: u.account_type, tier: u.tier, storedBytes: u.stored_bytes, monthUploadedBytes: u.month_uploaded_bytes, monthKey: u.month_key, baseLimit: BASE_LIMIT, creatorMonthLimit: CREATOR_MONTH_LIMIT });
+const safeUser = u => ({ id: u.id, username: u.username, discordId: u.discord_id, discordName: u.discord_name, accountType: u.account_type, tier: u.is_super ? 'super' : u.tier, storedBytes: u.stored_bytes, monthUploadedBytes: u.month_uploaded_bytes, monthKey: u.month_key, baseLimit: BASE_LIMIT, creatorMonthLimit: CREATOR_MONTH_LIMIT });
+const userSelect = 'SELECT u.*, EXISTS(SELECT 1 FROM studio_super_users su WHERE su.user_id=u.id) AS is_super FROM studio_users u';
 
 function dbOf(env) {
   if (!env.img_d1?.prepare) throw new Error('Studio requires a D1 binding named img_d1');
@@ -40,14 +44,15 @@ async function bodyJson(request) {
 async function currentUser(db, request) {
   const token = getCookie(request, 'studio_session');
   if (!token) return null;
-  const row = await db.prepare('SELECT u.* FROM studio_sessions s JOIN studio_users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.disabled=0').bind(await sha(token), Date.now()).first();
+  const row = await db.prepare(`SELECT u.*, EXISTS(SELECT 1 FROM studio_super_users su WHERE su.user_id=u.id) AS is_super FROM studio_sessions s JOIN studio_users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.disabled=0`).bind(await sha(token), Date.now()).first();
   return row || null;
 }
 async function sessionResponse(db, user) {
   const token = uid() + uid();
   await db.prepare('INSERT INTO studio_sessions(token_hash,user_id,expires_at) VALUES(?,?,?)').bind(await sha(token), user.id, Date.now() + SESSION_SECONDS * 1000).run();
   const headers = { 'Set-Cookie': cookie(token), 'Cache-Control': 'no-store' };
-  return json({ user: safeUser(user) }, 200, headers);
+  const fresh = await db.prepare(`${userSelect} WHERE u.id=?`).bind(user.id).first();
+  return json({ user: safeUser(fresh) }, 200, headers);
 }
 function actualImageType(bytes) {
   const text = (start, length) => new TextDecoder().decode(bytes.slice(start, start + length));
@@ -130,7 +135,7 @@ async function login(db, request) {
 async function reserve(db, user, size) {
   const month = monthKey();
   await db.prepare('UPDATE studio_users SET month_key=?,month_uploaded_bytes=0 WHERE id=? AND month_key<>?').bind(month, user.id, month).run();
-  const result = await db.prepare("UPDATE studio_users SET stored_bytes=stored_bytes+?,month_uploaded_bytes=month_uploaded_bytes+? WHERE id=? AND disabled=0 AND ((tier='pichu' AND stored_bytes+?<=?) OR (tier='pikachu' AND month_uploaded_bytes+?<=?))")
+  const result = await db.prepare("UPDATE studio_users SET stored_bytes=stored_bytes+?,month_uploaded_bytes=month_uploaded_bytes+? WHERE id=? AND disabled=0 AND (EXISTS(SELECT 1 FROM studio_super_users WHERE user_id=studio_users.id) OR (tier='pichu' AND stored_bytes+?<=?) OR (tier='pikachu' AND month_uploaded_bytes+?<=?))")
     .bind(size, size, user.id, size, BASE_LIMIT, size, CREATOR_MONTH_LIMIT).run();
   return result.meta?.changes === 1;
 }
@@ -177,10 +182,11 @@ async function saveImage(context, db, user, albumId, file) {
   const album = await db.prepare('SELECT id FROM studio_albums WHERE id=? AND user_id=?').bind(albumId, user.id).first();
   if (!album) return fail('相册不存在', 404);
   const { bytes, type, name, sourceUrl } = file;
-  if (!IMAGE_TYPES.has(type) || bytes.byteLength < 1 || bytes.byteLength > SINGLE_FILE_LIMIT || actualImageType(bytes) !== type) return fail('只接受 25 MB 以内的 PNG、JPEG、WebP、GIF、AVIF 或 BMP 原图', 400);
+  if (bytes.byteLength < 1 || bytes.byteLength > SINGLE_FILE_LIMIT || (!user.is_super && (!IMAGE_TYPES.has(type) || actualImageType(bytes) !== type))) return fail('普通账号只接受 25 MB 以内的 PNG、JPEG、WebP、GIF、AVIF 或 BMP 原图', 400);
   if (!await reserve(db, user, bytes.byteLength)) return fail('上传额度不足', 403);
-  const id = `studio/${user.id}/${album.id}/${uid()}.${EXTENSIONS[type]}`;
-  const metadata = { FileName: cleanName(name) || `image.${EXTENSIONS[type]}`, FileType: type, FileSize: (bytes.byteLength / 1048576).toFixed(2), FileSizeBytes: bytes.byteLength, UploadIP: request.headers.get('CF-Connecting-IP') || '', UploadAddress: '', ListType: 'None', TimeStamp: Date.now(), Label: 'None', Directory: `studio/${user.id}/${album.id}/`, Channel: 'CloudflareR2', ChannelName: 'Studio', OwnerId: user.id, Tags: [] };
+  const extension = user.is_super ? (cleanName(name).match(/\.([a-z0-9]{1,10})$/i)?.[1] || 'bin').toLowerCase() : EXTENSIONS[type];
+  const id = `studio/${user.id}/${album.id}/${uid()}.${extension}`;
+  const metadata = studioMetadata(request, user, album, cleanName(name) || `file.${extension}`, type, bytes.byteLength);
   try {
     await env.img_r2.put(id, bytes, { httpMetadata: { contentType: type } });
     await getDatabase(env).put(id, '', { metadata });
@@ -193,10 +199,83 @@ async function saveImage(context, db, user, albumId, file) {
     return fail('保存图片失败，请重试', 500);
   }
 }
+function studioMetadata(request, user, album, name, type, size) {
+  return { FileName: name, FileType: type, FileSize: (size / 1048576).toFixed(2), FileSizeBytes: size, UploadIP: request.headers.get('CF-Connecting-IP') || '', UploadAddress: '', ListType: 'None', TimeStamp: Date.now(), Label: 'None', Directory: `studio/${user.id}/${album.id}/`, Channel: 'CloudflareR2', ChannelName: 'Studio', OwnerId: user.id, Tags: [] };
+}
+async function multipart(context, db, user, route, method) {
+  const { request, env } = context;
+  if (!user.is_super) return fail('只有超级无敌美化大师丘可以上传任意文件', 403);
+  if (!env.img_r2?.createMultipartUpload) return fail('R2 存储桶未绑定为 img_r2', 503);
+  if (route === 'multipart/start' && method === 'POST') {
+    const data = await bodyJson(request);
+    const size = Number(data.size);
+    const name = cleanName(data.name);
+    const type = plain(data.type).split(';')[0].toLowerCase() || 'application/octet-stream';
+    const album = await db.prepare('SELECT id FROM studio_albums WHERE id=? AND user_id=?').bind(String(data.albumId || ''), user.id).first();
+    if (!album) return fail('相册不存在', 404);
+    if (!name || !Number.isSafeInteger(size) || size < 1 || !/^[\w.+-]+\/[\w.+-]+$/.test(type)) return fail('文件信息无效');
+    const partSize = Math.max(MIN_PART_SIZE, Math.ceil(size / MAX_PARTS / 1048576) * 1048576);
+    if (partSize > MAX_PART_SIZE) return fail('文件超过当前 Cloudflare 请求与 R2 分片可处理的大小', 413);
+    const extension = (name.match(/\.([a-z0-9]{1,10})$/i)?.[1] || 'bin').toLowerCase();
+    const key = `studio/${user.id}/${album.id}/${uid()}.${extension}`;
+    const upload = await env.img_r2.createMultipartUpload(key, { httpMetadata: { contentType: type } });
+    const id = uid();
+    try {
+      await db.prepare('INSERT INTO studio_uploads(id,user_id,album_id,object_key,r2_upload_id,file_name,mime_type,size_bytes,part_size,part_count) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(id, user.id, album.id, key, upload.uploadId, name, type, size, partSize, Math.ceil(size / partSize)).run();
+    } catch (error) { await upload.abort(); throw error; }
+    return json({ id, partSize, partCount: Math.ceil(size / partSize) }, 201);
+  }
+  const match = /^multipart\/([^/]+)\/(parts\/(\d+)|complete|abort)$/.exec(route);
+  if (!match) return fail('接口不存在', 404);
+  const row = await db.prepare('SELECT * FROM studio_uploads WHERE id=? AND user_id=?').bind(match[1], user.id).first();
+  if (!row) return fail('上传任务不存在，请重新选择文件', 404);
+  const upload = env.img_r2.resumeMultipartUpload(row.object_key, row.r2_upload_id);
+  if (match[2].startsWith('parts/') && method === 'PUT') {
+    const number = Number(match[3]);
+    if (!Number.isInteger(number) || number < 1 || number > row.part_count) return fail('分片编号无效');
+    const expected = number === row.part_count ? row.size_bytes - row.part_size * (number - 1) : row.part_size;
+    const hinted = Number(request.headers.get('Content-Length') || 0);
+    if (hinted && hinted !== expected) return fail('分片大小错误', 413);
+    const bytes = await request.arrayBuffer();
+    if (bytes.byteLength !== expected || bytes.byteLength > MAX_PART_SIZE) return fail('分片大小错误', 413);
+    const part = await upload.uploadPart(number, bytes);
+    await db.prepare('INSERT INTO studio_upload_parts(upload_id,part_number,etag) VALUES(?,?,?) ON CONFLICT(upload_id,part_number) DO UPDATE SET etag=excluded.etag').bind(row.id, number, part.etag).run();
+    return json({ partNumber: number });
+  }
+  if (match[2] === 'abort' && method === 'POST') {
+    await upload.abort();
+    await db.prepare('DELETE FROM studio_upload_parts WHERE upload_id=?').bind(row.id).run();
+    await db.prepare('DELETE FROM studio_uploads WHERE id=?').bind(row.id).run();
+    return json({ ok: true });
+  }
+  if (match[2] === 'complete' && method === 'POST') {
+    const results = await db.prepare('SELECT part_number,etag FROM studio_upload_parts WHERE upload_id=? ORDER BY part_number').bind(row.id).all();
+    const parts = results.results || [];
+    if (parts.length !== row.part_count || parts.some((part, index) => part.part_number !== index + 1)) return fail('仍有文件分片未上传完成', 409);
+    if (!await reserve(db, user, row.size_bytes)) return fail('账号已停用或权限已变更', 403);
+    const metadata = studioMetadata(request, user, { id: row.album_id }, row.file_name, row.mime_type, row.size_bytes);
+    let completed = false;
+    try {
+      await upload.complete(parts.map(part => ({ partNumber: part.part_number, etag: part.etag })));
+      completed = true;
+      await getDatabase(env).put(row.object_key, '', { metadata });
+      await db.prepare('INSERT INTO studio_files(id,user_id,album_id,file_name,mime_type,size_bytes) VALUES(?,?,?,?,?,?)').bind(row.object_key, user.id, row.album_id, row.file_name, row.mime_type, row.size_bytes).run();
+      await db.prepare('DELETE FROM studio_upload_parts WHERE upload_id=?').bind(row.id).run();
+      await db.prepare('DELETE FROM studio_uploads WHERE id=?').bind(row.id).run();
+      context.waitUntil(addFileToIndex(context, row.object_key, metadata));
+      return json({ id: row.object_key, url: `${new URL(request.url).origin}/file/${row.object_key}`, fileName: row.file_name, sizeBytes: row.size_bytes });
+    } catch (error) {
+      console.error('Studio multipart completion failed', error);
+      await Promise.allSettled([completed ? env.img_r2.delete(row.object_key) : upload.abort(), getDatabase(env).delete(row.object_key), refund(db, user.id, row.size_bytes)]);
+      return fail('保存文件失败，请重试', 500);
+    }
+  }
+  return fail('请求方法无效', 405);
+}
 async function handleUser(context, db, user, route, method) {
   const { request, env } = context;
   if (route === 'me' && method === 'GET') {
-    const fresh = await db.prepare('SELECT * FROM studio_users WHERE id=?').bind(user.id).first();
+    const fresh = await db.prepare(`${userSelect} WHERE u.id=?`).bind(user.id).first();
     const application = await db.prepare('SELECT id,status,work_title,created_at,reviewed_at FROM studio_applications WHERE user_id=? ORDER BY created_at DESC LIMIT 1').bind(user.id).first();
     return json({ user: safeUser(fresh), application });
   }
@@ -239,6 +318,7 @@ async function handleUser(context, db, user, route, method) {
     if (!uploaded || typeof uploaded.arrayBuffer !== 'function' || uploaded.size > SINGLE_FILE_LIMIT) return fail('请选择 25 MB 以内的图片');
     return saveImage(context, db, user, String(form.get('albumId') || ''), { bytes: new Uint8Array(await uploaded.arrayBuffer()), type: uploaded.type, name: uploaded.name });
   }
+  if (route.startsWith('multipart/')) return multipart(context, db, user, route, method);
   if (route === 'import-image' && method === 'POST') {
     const data = await bodyJson(request);
     const sourceUrl = plain(data.url);
@@ -279,7 +359,7 @@ async function handleAdmin(context, db, route, method) {
   if (!admin.valid) return fail('请先登录原图床管理后台', 401);
   if (route === 'admin/overview' && method === 'GET') {
     const [users, applications] = await Promise.all([
-      db.prepare('SELECT id,username,discord_id,discord_name,account_type,tier,disabled,stored_bytes,month_key,month_uploaded_bytes,created_at FROM studio_users ORDER BY created_at DESC LIMIT 500').all(),
+      db.prepare('SELECT u.id,u.username,u.discord_id,u.discord_name,u.account_type,u.tier,u.disabled,u.stored_bytes,u.month_key,u.month_uploaded_bytes,u.created_at,EXISTS(SELECT 1 FROM studio_super_users su WHERE su.user_id=u.id) AS is_super FROM studio_users u ORDER BY u.created_at DESC LIMIT 500').all(),
       db.prepare('SELECT a.*,u.username,u.discord_name FROM studio_applications a JOIN studio_users u ON u.id=a.user_id ORDER BY a.created_at DESC LIMIT 200').all()
     ]);
     return json({ users: users.results || [], applications: applications.results || [] });
@@ -302,8 +382,12 @@ async function handleAdmin(context, db, route, method) {
     const data = await bodyJson(request);
     const user = await db.prepare('SELECT id FROM studio_users WHERE id=?').bind(id).first();
     if (!user) return fail('用户不存在', 404);
-    if (data.tier && !['pichu', 'pikachu'].includes(data.tier)) return fail('权限等级无效');
-    if (data.tier) await db.prepare('UPDATE studio_users SET tier=?,month_uploaded_bytes=0,month_key=? WHERE id=?').bind(data.tier, monthKey(), id).run();
+    if (data.tier && !['pichu', 'pikachu', 'super'].includes(data.tier)) return fail('权限等级无效');
+    if (data.tier === 'super') await db.prepare('INSERT OR IGNORE INTO studio_super_users(user_id) VALUES(?)').bind(id).run();
+    else if (data.tier) {
+      await db.prepare('UPDATE studio_users SET tier=?,month_uploaded_bytes=0,month_key=? WHERE id=?').bind(data.tier, monthKey(), id).run();
+      await db.prepare('DELETE FROM studio_super_users WHERE user_id=?').bind(id).run();
+    }
     if (typeof data.disabled === 'boolean') await db.prepare('UPDATE studio_users SET disabled=? WHERE id=?').bind(data.disabled ? 1 : 0, id).run();
     return json({ ok: true });
   }
@@ -325,7 +409,7 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   const route = url.pathname.replace(/^\/api\/studio\/?/, '').replace(/\/+$/, '');
   const method = request.method.toUpperCase();
-  if (!['GET', 'POST', 'PATCH', 'DELETE'].includes(method)) return fail('不支持此请求方法', 405);
+  if (!['GET', 'POST', 'PATCH', 'DELETE', 'PUT'].includes(method)) return fail('不支持此请求方法', 405);
   if (method !== 'GET' && !safeOrigin(request)) return fail('请求来源无效', 403);
   try {
     const db = dbOf(env);

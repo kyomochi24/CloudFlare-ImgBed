@@ -9,13 +9,19 @@ function environment() {
   sqlite.exec(readFileSync(new URL('../database/migrations/studio.sql', import.meta.url), 'utf8'));
   const kvData = new Map();
   const objects = new Map();
+  const multipartUploads = new Map();
+  const multipart = (key, uploadId) => ({
+    async uploadPart(number, bytes) { const entry = multipartUploads.get(uploadId); entry.parts.set(number, Buffer.from(bytes)); return { etag: `part-${number}` }; },
+    async complete(parts) { const entry = multipartUploads.get(uploadId); objects.set(key, Buffer.concat(parts.map(part => entry.parts.get(part.partNumber)))); multipartUploads.delete(uploadId); },
+    async abort() { multipartUploads.delete(uploadId); }
+  });
   const env = {
     img_d1: { prepare(sql) { return { bind(...args) { const statement = sqlite.prepare(sql); return { async first() { return statement.get(...args) || null; }, async all() { return { results: statement.all(...args) }; }, async run() { return { meta: { changes: statement.run(...args).changes } }; } }; } }; } },
     img_url: { async get(key) { return kvData.get(key)?.value ?? null; }, async put(key, value, options = {}) { kvData.set(key, { value, metadata: options.metadata }); }, async delete(key) { kvData.delete(key); }, async getWithMetadata(key) { return kvData.get(key) || null; }, async list() { return { keys: [] }; } },
-    img_r2: { async put(key, value) { objects.set(key, value); }, async delete(key) { objects.delete(key); } }
+    img_r2: { async put(key, value) { objects.set(key, value); }, async delete(key) { objects.delete(key); }, async createMultipartUpload(key) { const uploadId = crypto.randomUUID(); multipartUploads.set(uploadId, { key, parts: new Map() }); return { uploadId, ...multipart(key, uploadId) }; }, resumeMultipartUpload: multipart }
   };
   kvData.set('manage@session@admin-test', { value: JSON.stringify({ authType: 'admin', username: 'owner', expiresAt: Date.now() + 3600000 }) });
-  return { env, sqlite, kvData, objects };
+  return { env, sqlite, kvData, objects, multipartUploads };
 }
 
 async function call(env, path, method = 'GET', body, cookie = '') {
@@ -111,4 +117,39 @@ test('Discord login only admits members of a configured guild', async () => {
     const secondGuild = await call(env, `oauth/callback?state=${state}&code=code`, 'GET', null, cookie);
     assert.equal(secondGuild.response.status, 302);
   } finally { globalThis.fetch = previousFetch; sqlite.close(); }
+});
+
+test('only admin can grant unlimited tier; arbitrary file uses R2 multipart and remains accounted for', async () => {
+  const { env, sqlite, objects, kvData } = environment();
+  const adminCookie = 'admin_session=admin-test';
+  const created = await call(env, 'admin/users', 'POST', { username: 'maker_1', password: 'very-long-password-123' }, adminCookie);
+  const login = await call(env, 'login', 'POST', { username: 'maker_1', password: 'very-long-password-123' });
+  const userCookie = login.response.headers.get('Set-Cookie').split(';')[0];
+  const albumId = (await call(env, 'albums', 'GET', null, userCookie)).data.albums[0].id;
+  const denied = await call(env, 'multipart/start', 'POST', { albumId, name: 'work.zip', type: 'application/zip', size: 9 * 1048576 }, userCookie);
+  assert.equal(denied.response.status, 403);
+  const selfGrant = await call(env, `admin/users/${created.data.id}`, 'PATCH', { tier: 'super' }, userCookie);
+  assert.equal(selfGrant.response.status, 401);
+  const grant = await call(env, `admin/users/${created.data.id}`, 'PATCH', { tier: 'super' }, adminCookie);
+  assert.equal(grant.response.status, 200);
+  assert.equal((await call(env, 'me', 'GET', null, userCookie)).data.user.tier, 'super');
+  const size = 9 * 1048576;
+  const started = await call(env, 'multipart/start', 'POST', { albumId, name: 'work.zip', type: 'application/zip', size }, userCookie);
+  assert.equal(started.response.status, 201);
+  assert.equal(started.data.partCount, 2);
+  for (let number = 1; number <= 2; number++) {
+    const partSize = number === 1 ? 8 * 1048576 : 1048576;
+    const request = new Request(`https://example.test/api/studio/multipart/${started.data.id}/parts/${number}`, { method: 'PUT', headers: { Origin: 'https://example.test', Cookie: userCookie }, body: Buffer.alloc(partSize, number) });
+    const response = await onRequest({ env, request, waitUntil(promise) { promise.catch(() => {}); } });
+    assert.equal(response.status, 200);
+  }
+  const finished = await call(env, `multipart/${started.data.id}/complete`, 'POST', null, userCookie);
+  assert.equal(finished.response.status, 200);
+  assert.equal(objects.get(finished.data.id).length, size);
+  assert.equal(kvData.get(finished.data.id).metadata.FileType, 'application/zip');
+  assert.equal((await call(env, 'me', 'GET', null, userCookie)).data.user.storedBytes, size);
+  const downgraded = await call(env, `admin/users/${created.data.id}`, 'PATCH', { tier: 'pichu' }, adminCookie);
+  assert.equal(downgraded.response.status, 200);
+  assert.equal((await call(env, 'me', 'GET', null, userCookie)).data.user.tier, 'pichu');
+  sqlite.close();
 });

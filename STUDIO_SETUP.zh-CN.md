@@ -5,7 +5,7 @@
 ## 上线前的准备
 
 1. 在 Cloudflare Pages 项目中确认已有 R2 绑定 `img_r2`、原项目的 KV 绑定 `img_url`（或原有数据库绑定）和管理员账号。新用户系统还要求一个 D1 数据库，绑定名必须是 `img_d1`。可以复用原来的 D1；如果原来仅用 KV，可以新建 D1 专供用户系统使用。**不要移除原有 KV 绑定**，旧图片元数据仍在其中。
-2. 在 D1 的控制台执行 [`database/migrations/studio.sql`](database/migrations/studio.sql)。这只创建六张 `studio_` 表，不改原图床记录。也可以用 Wrangler 对对应数据库执行：`npx wrangler d1 execute 数据库名 --remote --file=database/migrations/studio.sql`。
+2. 首次部署时，在 D1 的控制台执行 [`database/migrations/studio.sql`](database/migrations/studio.sql)。这只创建新的 `studio_` 表，不改原图床记录。也可以用 Wrangler 对对应数据库执行：`npx wrangler d1 execute 数据库名 --remote --file=database/migrations/studio.sql`。**如果你之前已经运行过旧版 `studio.sql`，这次只需要运行 [`database/migrations/studio-super.sql`](database/migrations/studio-super.sql)，已有用户和图片不会被清空。**
 3. 在 [Discord Developer Portal](https://discord.com/developers/applications) 创建应用，到 OAuth2 页面取得 Client ID 和 Client Secret。Redirect URI 填 **`https://771553.xyz/api/studio/oauth/callback`**，需要的 scopes 是 `identify` 和 `guilds`。这里不需要 Discord Bot；皮丘和皮卡丘仅是图床站内等级。
 4. 已将你给的两个 Discord 服务器 ID `1291925535324110879` 与 `1379304008157499423` 设为默认放行范围；加入其中任意一个即可登录。如果今后更换社区，可在 Cloudflare Pages 设置 `DISCORD_GUILD_IDS` 覆盖默认值，多个 ID 用英文逗号隔开。复制服务器 ID 的方法是「用户设置 → 高级 → 开发者模式」，再右键服务器图标。
 5. 在 Cloudflare Pages → 项目 → 设置 → 变量和机密中配置：
@@ -38,13 +38,15 @@
 3. 配好 Discord 变量和服务器 ID 后，普通用户打开 `/studio/`，用 Discord 授权登录。只有授权结果显示已加入允许的服务器才会创建皮丘账号。
 4. 皮丘累计可保存 **100 MiB**。删除图片会释放空间。图片不会因时间到期而自动删除。
 5. 用户在个人小屋填写任意位数的 Discord 数字 ID 与作品名即可提交审核；其余字段可留空，成功后按钮旁显示「已提交」。管理员在站长小本本中审核。通过后升级为皮卡丘，每个**北京时间自然月**可上传 **1 GiB**；上个月上传的图片仍保留。删除图片不返还当月上传额度。
-6. 在相册里点击「上传原图」，或拖入旁边的小区域上传图片。点击图片可依次选中并显示 1、2、3 等编号，然后一键复制已选图链。美化搬家助手可选择或拖入 `.json`，也可点击「清空当前选择」重新选文件；把里面的图片逐张导入当前相册，再点「下载替换后的 JSON」。原文件保持不变；某条图链搬运失败时，新 JSON 中该条图链仍使用旧地址。单张图片最大 25 MiB，单个 JSON 最大 5 MiB。
+6. 管理员也可以在 `/studio/admin.html` 的用户列表中，打开「站内身份」菜单，手动选择**超级无敌美化大师丘**。此身份不需要 Discord 身份组，网站内不限制上传的文件类型、次数和累计空间；普通人不能自己申请或领取。收回时在同一个菜单改为皮丘或皮卡丘。
+7. 在相册里点击「上传原图」，或将文件拖到它**左边的虚线框**。点击图片可依次选中并显示 1、2、3 等编号，然后一键复制已选图链。美化搬家助手可选择或拖入 `.json`，也可点击「清空当前选择」重新选文件；把里面的图片逐张导入当前相册，再点「下载替换后的 JSON」。原文件保持不变；某条图链搬运失败时，新 JSON 中该条图链仍使用旧地址。普通用户单张图片最大 25 MiB，单个 JSON 最大 5 MiB。
 
 ## 使用边界
 
 - 旧版共用用户口令和旧版用户会话已不能调用上传接口，这样不能绕过个人额度。原管理员会话及管理员 API Token 仍可使用旧接口。
 - 相册目录仅登录用户可见，**图片图链是公开链接**；知道图链的人可以访问。请勿存放私密图片。
-- 新上传图片保存在 R2，原字节写入，不调用压缩。出于安全考虑，这个入口接受 PNG、JPEG、WebP、GIF、AVIF、BMP，不接受可执行脚本的 SVG。网站字体已下载并自托管于 `/studio/bubble.woff2`。
+- 新上传图片保存在 R2，原字节写入，不调用压缩。普通用户入口接受 PNG、JPEG、WebP、GIF、AVIF、BMP。超级无敌美化大师丘可以上传其他文件；这类文件的公开链接会强制下载，不会在本站域名下执行 HTML、SVG 或脚本。网站字体已下载并自托管于 `/studio/bubble.woff2`。
+- 超级身份没有**网站内的账号额度**。大文件通过 R2 分片上传，每片按文件大小取 8–80 MiB。Cloudflare 仍有硬限制：免费／Pro 套餐的单次请求体上限为 100 MB，R2 多部分上传最多 10,000 片，单个对象上限约 5 TiB。当前网页上传器在免费／Pro 环境中实际支持约 780 GiB 以内的单个文件；网络中断需要重新上传当前文件。参见 [Cloudflare Workers 限制](https://developers.cloudflare.com/workers/platform/limits/) 和 [R2 限制](https://developers.cloudflare.com/r2/platform/limits/)。
 - 页面壁纸按屏幕宽度切换：电脑端使用你提供的草莓条纹图，手机端使用粉色格纹图。兔子插画和壁纸继续从你现有图床的公开链接读取；请保留这些原图片。
 - JSON 导入只识别带图片扩展名的 HTTPS 链接；CSS、字体和无扩展名链接会留在原位。图片来源必须属于 `STUDIO_IMPORT_HOSTS` 允许列表。作品名称示例可填写「像素甜点屋」。
 - Discord 授权需要用户浏览器能够访问 Discord；中国大陆网络能否直连不能由图床或域名设置保证。管理员发放的本地账号是无需 Discord 的替代入口。Cloudflare 在中国大陆的直连速度与可用性也需要在实际运营商网络上测试。

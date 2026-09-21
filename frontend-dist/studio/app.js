@@ -26,27 +26,31 @@ import { imageLinks, replaceLinks } from './theme-utils.js';
       const number = order.indexOf(button.dataset.select) + 1;
       button.closest('.file-card').classList.toggle('selected', number > 0);
       button.setAttribute('aria-pressed', number > 0 ? 'true' : 'false');
-      button.querySelector('.selection-badge').textContent = number || '＋';
+      button.querySelector('.selection-badge').textContent = number || '';
     });
   }
   function showMember() { $('guest').classList.toggle('hidden', !!state.user); $('member').classList.toggle('hidden', !state.user); $('logout').classList.toggle('hidden', !state.user); }
   function renderProfile() {
     const u = state.user;
     $('display-name').textContent = u.discordName || u.username || '甜品屋客人';
+    const superUser = u.tier === 'super';
     const creator = u.tier === 'pikachu';
     const limit = creator ? u.creatorMonthLimit : u.baseLimit;
     const month = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 7);
     const used = creator && u.monthKey === month ? u.monthUploadedBytes : creator ? 0 : u.storedBytes;
-    $('tier-description').textContent = creator ? '皮卡丘 ♡ 每月可上传 1 GB，旧图永久保留。' : '皮丘 ✿ 总共可保存 100 MB，图片永久保留。';
-    $('quota-label').textContent = creator ? '本月上传额度' : '当前存储额度';
-    $('quota-value').textContent = `${fmt(used)} / ${fmt(limit)}`;
-    $('quota-bar').style.width = `${Math.min(100, 100 * used / limit)}%`;
-    $('quota-detail').textContent = creator ? `剩余 ${fmt(Math.max(0, limit - used))} · 已保存 ${fmt(u.storedBytes)}，旧图不计入本月额度` : `剩余 ${fmt(Math.max(0, limit - used))} · 删除图片可释放空间`;
+    $('tier-description').textContent = superUser ? '超级无敌美化大师丘 ✦ 站长专属授权，可上传任意类型文件，站内不设额度。' : creator ? '皮卡丘 ♡ 每月可上传 1 GB，旧图永久保留。' : '皮丘 ✿ 总共可保存 100 MB，图片永久保留。';
+    $('quota-label').textContent = superUser ? '已保存文件' : creator ? '本月上传额度' : '当前存储额度';
+    $('quota-value').textContent = superUser ? fmt(u.storedBytes) : `${fmt(used)} / ${fmt(limit)}`;
+    $('quota-bar').style.width = superUser ? '100%' : `${Math.min(100, 100 * used / limit)}%`;
+    $('quota-detail').textContent = superUser ? '站内没有上传次数、类型或总容量限制；单次传输仍受 Cloudflare 平台限制。' : creator ? `剩余 ${fmt(Math.max(0, limit - used))} · 已保存 ${fmt(u.storedBytes)}，旧图不计入本月额度` : `剩余 ${fmt(Math.max(0, limit - used))} · 删除图片可释放空间`;
+    $('upload-input').accept = superUser ? '' : 'image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp';
+    $('upload-label-text').textContent = superUser ? '＋ 上传文件' : '＋ 上传原图';
+    $('image-drop').setAttribute('aria-label', superUser ? '选择或拖入任意文件' : '选择或拖入图片');
     const pending = state.application?.status === 'pending';
-    $('application-form').classList.toggle('hidden', creator);
+    $('application-form').classList.toggle('hidden', creator || superUser);
     $('application-form').querySelector('button[type=submit]').disabled = pending;
     if (pending) applicationFeedback('已提交');
-    $('application-state').textContent = creator ? '♡ 你已经是皮卡丘啦！' : state.application?.status === 'pending' ? `✉「${state.application.work_title}」正在等待管理员审核。` : state.application?.status === 'rejected' ? '上次申请未通过，你可以修改信息后重新提交。' : '';
+    $('application-state').textContent = superUser ? '✦ 你已经是超级无敌美化大师丘啦！' : creator ? '♡ 你已经是皮卡丘啦！' : state.application?.status === 'pending' ? `✉「${state.application.work_title}」正在等待管理员审核。` : state.application?.status === 'rejected' ? '上次申请未通过，你可以修改信息后重新提交。' : '';
     if (u.discordId) $('application-form').elements.discordId.value = u.discordId;
   }
   function renderAlbums() {
@@ -54,7 +58,8 @@ import { imageLinks, replaceLinks } from './theme-utils.js';
     $('current-album-name').textContent = state.albums.find(a => a.id === state.albumId)?.name || '我的相册';
   }
   function renderFiles() {
-    $('file-grid').innerHTML = state.files.length ? state.files.map(f => `<div class="file-card"><button class="file-image-select" type="button" data-select="${escapeHtml(f.id)}" aria-label="选择图片：${escapeHtml(f.file_name)}"><img loading="lazy" src="${escapeHtml(f.url)}" alt=""><span class="selection-badge" aria-hidden="true">＋</span></button><strong title="${escapeHtml(f.file_name)}">${escapeHtml(f.file_name)}</strong><div class="file-actions"><button data-copy="${escapeHtml(f.url)}">复制图链</button><button data-delete="${escapeHtml(f.id)}">删除</button></div></div>`).join('') : '<div class="empty">相册里还空空的。上传第一张图片吧 ♡</div>';
+    const previewTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
+    $('file-grid').innerHTML = state.files.length ? state.files.map(f => `<div class="file-card"><button class="file-image-select" type="button" data-select="${escapeHtml(f.id)}" aria-label="选择文件：${escapeHtml(f.file_name)}">${previewTypes.has(f.mime_type) ? `<img loading="lazy" src="${escapeHtml(f.url)}" alt="">` : '<span class="file-placeholder" aria-hidden="true">✦<small>文件</small></span>'}<span class="selection-badge" aria-hidden="true"></span></button><strong title="${escapeHtml(f.file_name)}">${escapeHtml(f.file_name)}</strong><div class="file-actions"><button type="button" data-copy="${escapeHtml(f.url)}">复制图链</button><button type="button" data-delete="${escapeHtml(f.id)}">删除</button></div></div>`).join('') : '<div class="empty">相册里还空空的。上传第一张图片吧 ♡</div>';
     $('more-files').classList.toggle('hidden', !state.hasMore);
     renderSelection();
   }
@@ -76,10 +81,27 @@ import { imageLinks, replaceLinks } from './theme-utils.js';
   $('album-form').addEventListener('submit', async event => { if (event.submitter?.value !== 'create') return; event.preventDefault(); try { const data = await api('albums', jsonOptions({ name: $('album-name').value })); $('album-dialog').close(); $('album-name').value = ''; state.albumId = data.id; await refreshAlbums(); notice('新相册已经摆好啦 ✿'); } catch (e) { notice(e.message, true); } });
   $('album-list').addEventListener('click', async event => { const button = event.target.closest('[data-id]'); if (!button) return; state.albumId = button.dataset.id; renderAlbums(); await refreshFiles(); });
   $('more-files').addEventListener('click', async () => { try { await refreshFiles(true); } catch (e) { notice(e.message, true); } });
+  async function uploadSuperFile(file, position, total) {
+    const started = await api('multipart/start', jsonOptions({ albumId: state.albumId, name: file.name, type: file.type || 'application/octet-stream', size: file.size }));
+    try {
+      for (let number = 1; number <= started.partCount; number++) {
+        const start = (number - 1) * started.partSize;
+        const piece = file.slice(start, Math.min(file.size, start + started.partSize));
+        $('upload-status').textContent = `正在上传 ${position} / ${total}：${file.name} · ${Math.round(100 * start / file.size)}%`;
+        await api(`multipart/${encodeURIComponent(started.id)}/parts/${number}`, { method: 'PUT', body: piece });
+      }
+      $('upload-status').textContent = `正在保存 ${position} / ${total}：${file.name}`;
+      await api(`multipart/${encodeURIComponent(started.id)}/complete`, { method: 'POST' });
+    } catch (error) {
+      await api(`multipart/${encodeURIComponent(started.id)}/abort`, { method: 'POST' }).catch(() => {});
+      throw error;
+    }
+  }
   async function uploadFiles(files) {
     if (!files.length || state.uploading) return;
     if (!state.albumId) { $('upload-status').textContent = '请先创建相册'; return; }
     const allowed = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
+    const superUser = state.user?.tier === 'super';
     state.uploading = true;
     let success = 0;
     const failures = [];
@@ -87,16 +109,18 @@ import { imageLinks, replaceLinks } from './theme-utils.js';
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         $('upload-status').textContent = `正在上传 ${i + 1} / ${files.length}：${file.name}`;
-        if (!allowed.has(file.type)) { failures.push(`${file.name}：不是支持的图片格式`); continue; }
-        if (file.size > 25 * 1048576) { failures.push(`${file.name}：单张图片不能超过 25 MB`); continue; }
-        const form = new FormData();
-        form.set('file', file);
-        form.set('albumId', state.albumId);
-        try { await api('files', { method: 'POST', body: form }); success++; }
+        if (!file.size) { failures.push(`${file.name}：不能上传空文件`); continue; }
+        if (!superUser && !allowed.has(file.type)) { failures.push(`${file.name}：不是支持的图片格式`); continue; }
+        if (!superUser && file.size > 25 * 1048576) { failures.push(`${file.name}：单张图片不能超过 25 MB`); continue; }
+        try {
+          if (superUser) await uploadSuperFile(file, i + 1, files.length);
+          else { const form = new FormData(); form.set('file', file); form.set('albumId', state.albumId); await api('files', { method: 'POST', body: form }); }
+          success++;
+        }
         catch (e) { failures.push(`${file.name}：${e.message}`); }
       }
       await Promise.all([refreshProfile(), refreshAlbums()]);
-      $('upload-status').textContent = `已上传 ${success} / ${files.length} 张${failures.length ? `；${failures[0]}${failures.length > 1 ? `，另有 ${failures.length - 1} 张失败` : ''}` : ' ♡'}`;
+      $('upload-status').textContent = `已上传 ${success} / ${files.length} 个文件${failures.length ? `；${failures[0]}${failures.length > 1 ? `，另有 ${failures.length - 1} 个失败` : ''}` : ' ♡'}`;
     } catch (e) { $('upload-status').textContent = `上传后刷新失败：${e.message}`; }
     finally { state.uploading = false; }
   }
