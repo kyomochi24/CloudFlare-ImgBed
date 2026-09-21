@@ -132,8 +132,21 @@ async function login(db, request) {
   await db.prepare('DELETE FROM studio_login_attempts WHERE key=?').bind(key).run();
   return sessionResponse(db, user);
 }
+async function reconcileCreatorMonth(db, id) {
+  const month = monthKey();
+  // A previous approval reset month_uploaded_bytes to zero. Restore at least the
+  // bytes represented by files still present this month, while preserving a
+  // higher historical counter for files that were later deleted.
+  await db.prepare(`UPDATE studio_users SET month_key=?, month_uploaded_bytes=max(
+    CASE WHEN month_key=? THEN month_uploaded_bytes ELSE 0 END,
+    COALESCE((SELECT sum(f.size_bytes) FROM studio_files f WHERE f.user_id=studio_users.id
+      AND strftime('%Y-%m', datetime(f.created_at, '+8 hours'))=?), 0)
+  ) WHERE id=? AND tier='pikachu' AND NOT EXISTS(SELECT 1 FROM studio_super_users WHERE user_id=studio_users.id)`)
+    .bind(month, month, month, id).run();
+}
 async function reserve(db, user, size) {
   const month = monthKey();
+  if (user.tier === 'pikachu' && !user.is_super) await reconcileCreatorMonth(db, user.id);
   await db.prepare('UPDATE studio_users SET month_key=?,month_uploaded_bytes=0 WHERE id=? AND month_key<>?').bind(month, user.id, month).run();
   const result = await db.prepare("UPDATE studio_users SET stored_bytes=stored_bytes+?,month_uploaded_bytes=month_uploaded_bytes+? WHERE id=? AND disabled=0 AND (EXISTS(SELECT 1 FROM studio_super_users WHERE user_id=studio_users.id) OR (tier='pichu' AND stored_bytes+?<=?) OR (tier='pikachu' AND month_uploaded_bytes+?<=?))")
     .bind(size, size, user.id, size, BASE_LIMIT, size, CREATOR_MONTH_LIMIT).run();
@@ -275,6 +288,7 @@ async function multipart(context, db, user, route, method) {
 async function handleUser(context, db, user, route, method) {
   const { request, env } = context;
   if (route === 'me' && method === 'GET') {
+    if (user.tier === 'pikachu' && !user.is_super) await reconcileCreatorMonth(db, user.id);
     const fresh = await db.prepare(`${userSelect} WHERE u.id=?`).bind(user.id).first();
     const application = await db.prepare('SELECT id,status,work_title,created_at,reviewed_at FROM studio_applications WHERE user_id=? ORDER BY created_at DESC LIMIT 1').bind(user.id).first();
     return json({ user: safeUser(fresh), application });
@@ -385,7 +399,7 @@ async function handleAdmin(context, db, route, method) {
     if (data.tier && !['pichu', 'pikachu', 'super'].includes(data.tier)) return fail('权限等级无效');
     if (data.tier === 'super') await db.prepare('INSERT OR IGNORE INTO studio_super_users(user_id) VALUES(?)').bind(id).run();
     else if (data.tier) {
-      await db.prepare('UPDATE studio_users SET tier=?,month_uploaded_bytes=0,month_key=? WHERE id=?').bind(data.tier, monthKey(), id).run();
+      await db.prepare('UPDATE studio_users SET tier=? WHERE id=?').bind(data.tier, id).run();
       await db.prepare('DELETE FROM studio_super_users WHERE user_id=?').bind(id).run();
     }
     if (typeof data.disabled === 'boolean') await db.prepare('UPDATE studio_users SET disabled=? WHERE id=?').bind(data.disabled ? 1 : 0, id).run();
@@ -398,7 +412,7 @@ async function handleAdmin(context, db, route, method) {
     const application = await db.prepare("SELECT * FROM studio_applications WHERE id=? AND status='pending'").bind(id).first();
     if (!application) return fail('申请不存在或已审核', 404);
     await db.prepare('UPDATE studio_applications SET status=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status=\'pending\'').bind(data.decision, id).run();
-    if (data.decision === 'approved') await db.prepare("UPDATE studio_users SET tier='pikachu',month_key=?,month_uploaded_bytes=0 WHERE id=?").bind(monthKey(), application.user_id).run();
+    if (data.decision === 'approved') await db.prepare("UPDATE studio_users SET tier='pikachu' WHERE id=?").bind(application.user_id).run();
     return json({ ok: true });
   }
   return fail('接口不存在', 404);

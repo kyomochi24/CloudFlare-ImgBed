@@ -21,3 +21,13 @@ export function replaceLinks(raw, replacements) {
   JSON.parse(changed);
   return changed;
 }
+
+export function renameTheme(raw, name) {
+  const theme = JSON.parse(raw);
+  if (!theme || typeof theme !== 'object' || Array.isArray(theme)) throw new Error('美化 JSON 顶层必须是对象');
+  const title = String(name || '').trim();
+  if (!title) throw new Error('请填写搬家后的美化名称');
+  theme.name = title;
+  const indent = raw.match(/\r?\n([ \t]+)"/)?.[1] || '  ';
+  return JSON.stringify(theme, null, indent) + (/\r?\n$/.test(raw) ? '\n' : '');
+}

@@ -1,4 +1,4 @@
-import { imageLinks, replaceLinks } from './theme-utils.js';
+import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=20260922d';
 
 (() => {
   'use strict';
@@ -6,6 +6,20 @@ import { imageLinks, replaceLinks } from './theme-utils.js';
   const state = { user: null, albums: [], albumId: '', files: [], hasMore: false, selectedFiles: new Set(), uploading: false, importing: false, rawJson: '', jsonName: '', links: [], replacements: new Map(), application: null };
   const fmt = n => n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1024).toFixed(1)} KB`;
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+  const progress = document.createElement('div');
+  progress.id = 'upload-progress';
+  progress.className = 'upload-progress hidden';
+  progress.setAttribute('role', 'progressbar');
+  progress.setAttribute('aria-label', '上传进度');
+  progress.setAttribute('aria-valuemin', '0');
+  progress.setAttribute('aria-valuemax', '100');
+  progress.setAttribute('aria-valuenow', '0');
+  progress.innerHTML = '<div class="upload-progress-track"><i id="upload-progress-fill"></i></div><span id="upload-progress-label">0%</span>';
+  $('upload-status').after(progress);
+  const outputNameLabel = document.createElement('label');
+  outputNameLabel.className = 'output-name-field';
+  outputNameLabel.innerHTML = '搬家后的美化名称<input id="json-output-name" type="text" maxlength="100" placeholder="例如：像素甜点屋" disabled>';
+  $('json-file-name').after(outputNameLabel);
   function notice(message, error = false) { const el = $('notice'); el.textContent = message; el.classList.toggle('error', error); el.classList.remove('hidden'); clearTimeout(notice.timer); notice.timer = setTimeout(() => el.classList.add('hidden'), 6500); }
   async function api(path, options = {}) {
     const response = await fetch(`/api/studio/${path}`, { credentials: 'same-origin', ...options });
@@ -81,17 +95,43 @@ import { imageLinks, replaceLinks } from './theme-utils.js';
   $('album-form').addEventListener('submit', async event => { if (event.submitter?.value !== 'create') return; event.preventDefault(); try { const data = await api('albums', jsonOptions({ name: $('album-name').value })); $('album-dialog').close(); $('album-name').value = ''; state.albumId = data.id; await refreshAlbums(); notice('新相册已经摆好啦 ✿'); } catch (e) { notice(e.message, true); } });
   $('album-list').addEventListener('click', async event => { const button = event.target.closest('[data-id]'); if (!button) return; state.albumId = button.dataset.id; renderAlbums(); await refreshFiles(); });
   $('more-files').addEventListener('click', async () => { try { await refreshFiles(true); } catch (e) { notice(e.message, true); } });
-  async function uploadSuperFile(file, position, total) {
+  function uploadRequest(path, method, body, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open(method, `/api/studio/${path}`);
+      xhr.withCredentials = true;
+      xhr.upload.addEventListener('progress', event => { if (event.lengthComputable && onProgress) onProgress(event.loaded / event.total); });
+      xhr.addEventListener('error', () => reject(new Error('网络中断，请重试')));
+      xhr.addEventListener('abort', () => reject(new Error('上传已取消')));
+      xhr.addEventListener('load', () => {
+        let data = {};
+        try { data = JSON.parse(xhr.responseText); } catch { /* A proxy may return plain text. */ }
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else reject(new Error(data.error || `上传失败 (${xhr.status})`));
+      });
+      xhr.send(body);
+    });
+  }
+  function showUploadProgress(bytes, total, fileName, finished = false) {
+    const percent = finished ? 100 : Math.min(99, Math.floor(100 * bytes / total));
+    progress.classList.remove('hidden');
+    progress.setAttribute('aria-valuenow', String(percent));
+    $('upload-progress-fill').style.width = `${percent}%`;
+    $('upload-progress-label').textContent = finished ? '100% · 上传完成' : `${percent}% · ${fileName}`;
+  }
+  async function uploadSuperFile(file, position, total, onProgress) {
     const started = await api('multipart/start', jsonOptions({ albumId: state.albumId, name: file.name, type: file.type || 'application/octet-stream', size: file.size }));
     try {
       for (let number = 1; number <= started.partCount; number++) {
         const start = (number - 1) * started.partSize;
         const piece = file.slice(start, Math.min(file.size, start + started.partSize));
-        $('upload-status').textContent = `正在上传 ${position} / ${total}：${file.name} · ${Math.round(100 * start / file.size)}%`;
-        await api(`multipart/${encodeURIComponent(started.id)}/parts/${number}`, { method: 'PUT', body: piece });
+        $('upload-status').textContent = `正在上传 ${position} / ${total}：${file.name}（分片 ${number} / ${started.partCount}）`;
+        await uploadRequest(`multipart/${encodeURIComponent(started.id)}/parts/${number}`, 'PUT', piece, ratio => onProgress(start + piece.size * ratio));
+        onProgress(start + piece.size);
       }
       $('upload-status').textContent = `正在保存 ${position} / ${total}：${file.name}`;
       await api(`multipart/${encodeURIComponent(started.id)}/complete`, { method: 'POST' });
+      onProgress(file.size);
     } catch (error) {
       await api(`multipart/${encodeURIComponent(started.id)}/abort`, { method: 'POST' }).catch(() => {});
       throw error;
@@ -102,25 +142,39 @@ import { imageLinks, replaceLinks } from './theme-utils.js';
     if (!state.albumId) { $('upload-status').textContent = '请先创建相册'; return; }
     const allowed = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
     const superUser = state.user?.tier === 'super';
+    const failures = [];
+    const eligible = files.filter(file => {
+      let reason = '';
+      if (!file.size) reason = '不能上传空文件';
+      else if (!superUser && !allowed.has(file.type)) reason = '不是支持的图片格式';
+      else if (!superUser && file.size > 25 * 1048576) reason = '单张图片不能超过 25 MB';
+      if (reason) failures.push(`${file.name}：${reason}`);
+      return !reason;
+    });
+    if (!eligible.length) { $('upload-status').textContent = failures[0]; return; }
+    const totalBytes = eligible.reduce((sum, file) => sum + file.size, 0);
     state.uploading = true;
     let success = 0;
-    const failures = [];
+    let completedBytes = 0;
+    showUploadProgress(0, totalBytes, eligible[0].name);
     try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        $('upload-status').textContent = `正在上传 ${i + 1} / ${files.length}：${file.name}`;
-        if (!file.size) { failures.push(`${file.name}：不能上传空文件`); continue; }
-        if (!superUser && !allowed.has(file.type)) { failures.push(`${file.name}：不是支持的图片格式`); continue; }
-        if (!superUser && file.size > 25 * 1048576) { failures.push(`${file.name}：单张图片不能超过 25 MB`); continue; }
+      for (let i = 0; i < eligible.length; i++) {
+        const file = eligible[i];
+        $('upload-status').textContent = `正在上传 ${i + 1} / ${eligible.length}：${file.name}`;
+        const onProgress = uploadedBytes => showUploadProgress(completedBytes + uploadedBytes, totalBytes, file.name);
         try {
-          if (superUser) await uploadSuperFile(file, i + 1, files.length);
-          else { const form = new FormData(); form.set('file', file); form.set('albumId', state.albumId); await api('files', { method: 'POST', body: form }); }
+          if (superUser) await uploadSuperFile(file, i + 1, eligible.length, onProgress);
+          else { const form = new FormData(); form.set('file', file); form.set('albumId', state.albumId); await uploadRequest('files', 'POST', form, ratio => onProgress(file.size * ratio)); }
           success++;
         }
         catch (e) { failures.push(`${file.name}：${e.message}`); }
+        completedBytes += file.size;
+        showUploadProgress(completedBytes, totalBytes, file.name);
       }
       await Promise.all([refreshProfile(), refreshAlbums()]);
       $('upload-status').textContent = `已上传 ${success} / ${files.length} 个文件${failures.length ? `；${failures[0]}${failures.length > 1 ? `，另有 ${failures.length - 1} 个失败` : ''}` : ' ♡'}`;
+      if (success) showUploadProgress(totalBytes, totalBytes, '', true);
+      else { $('upload-progress-label').textContent = '上传失败'; progress.setAttribute('aria-valuenow', '0'); $('upload-progress-fill').style.width = '0%'; }
     } catch (e) { $('upload-status').textContent = `上传后刷新失败：${e.message}`; }
     finally { state.uploading = false; }
   }
@@ -157,13 +211,13 @@ import { imageLinks, replaceLinks } from './theme-utils.js';
     if (state.importing) return notice('请等当前图片搬运完成后再选择文件', true);
     if (!file || !file.name.toLowerCase().endsWith('.json')) return notice('请选择 .json 美化文件', true);
     if (file.size > 5 * 1048576) return notice('JSON 文件不能超过 5 MB', true);
-    try { const raw = await file.text(); state.links = imageLinks(raw); state.rawJson = raw; state.jsonName = file.name; state.replacements.clear(); $('json-file-name').textContent = file.name; $('theme-results').classList.remove('hidden'); $('theme-count').textContent = `发现 ${state.links.length} 条不同的图片链接`;
+    try { const raw = await file.text(); state.links = imageLinks(raw); const theme = JSON.parse(raw); if (!theme || typeof theme !== 'object' || Array.isArray(theme)) throw new Error('Invalid theme'); state.rawJson = raw; state.jsonName = file.name; state.replacements.clear(); $('json-file-name').textContent = file.name; $('json-output-name').value = `${String(theme.name || file.name.replace(/\.json$/i, '')).trim()}-已搬家`; $('json-output-name').disabled = false; $('theme-results').classList.remove('hidden'); $('theme-count').textContent = `发现 ${state.links.length} 条不同的图片链接`;
       $('theme-links').innerHTML = state.links.map((url, i) => `<div class="link-row" id="link-${i}">${escapeHtml(url)}</div>`).join('') || '<div class="hint">没有识别到带图片扩展名的链接。</div>';
       $('theme-progress').textContent = '图片不会被压缩。搬运前请确认你有权保存这些图片。'; $('import-all').disabled = state.links.length === 0; $('download-json').disabled = true; $('clear-json').disabled = false;
     } catch { notice('JSON 文件格式不正确，无法解析', true); }
   }
   $('json-input').addEventListener('change', event => { loadJson(event.target.files[0]); event.target.value = ''; });
-  $('clear-json').addEventListener('click', () => { if (state.importing) return; state.links = []; state.rawJson = ''; state.jsonName = ''; state.replacements.clear(); $('json-input').value = ''; $('json-file-name').textContent = '还没有选择文件'; $('theme-results').classList.add('hidden'); $('theme-links').replaceChildren(); $('theme-count').textContent = ''; $('theme-progress').textContent = ''; $('import-all').disabled = true; $('download-json').disabled = true; $('clear-json').disabled = true; });
+  $('clear-json').addEventListener('click', () => { if (state.importing) return; state.links = []; state.rawJson = ''; state.jsonName = ''; state.replacements.clear(); $('json-input').value = ''; $('json-file-name').textContent = '还没有选择文件'; $('json-output-name').value = ''; $('json-output-name').disabled = true; $('theme-results').classList.add('hidden'); $('theme-links').replaceChildren(); $('theme-count').textContent = ''; $('theme-progress').textContent = ''; $('import-all').disabled = true; $('download-json').disabled = true; $('clear-json').disabled = true; });
   $('json-drop').addEventListener('dragover', event => { event.preventDefault(); event.currentTarget.style.background = '#f9dae7'; });
   $('json-drop').addEventListener('dragleave', event => { event.currentTarget.style.background = ''; });
   $('json-drop').addEventListener('drop', event => { event.preventDefault(); event.currentTarget.style.background = ''; loadJson(event.dataTransfer.files[0]); });
@@ -189,6 +243,6 @@ import { imageLinks, replaceLinks } from './theme-utils.js';
     } catch (e) { $('theme-progress').textContent = `搬运后刷新失败：${e.message}`; }
     finally { state.importing = false; button.disabled = false; $('clear-json').disabled = !state.rawJson; }
   });
-  $('download-json').addEventListener('click', () => { let changed; try { changed = replaceLinks(state.rawJson, state.replacements); } catch { return notice('替换后 JSON 校验失败，请联系管理员', true); } const blob = new Blob([changed], { type: 'application/json;charset=utf-8' }); const objectUrl = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = objectUrl; anchor.download = state.jsonName.replace(/\.json$/i, '') + '-图链已替换.json'; anchor.click(); setTimeout(() => URL.revokeObjectURL(objectUrl), 1000); });
+  $('download-json').addEventListener('click', () => { const title = $('json-output-name').value.trim(); if (!title) { notice('请填写搬家后的美化名称', true); $('json-output-name').focus(); return; } let changed; try { changed = renameTheme(replaceLinks(state.rawJson, state.replacements), title); } catch { return notice('替换后 JSON 校验失败，请联系管理员', true); } const blob = new Blob([changed], { type: 'application/json;charset=utf-8' }); const objectUrl = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = objectUrl; anchor.download = (title.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/[. ]+$/g, '').slice(0, 100) || '搬家后的美化') + '.json'; anchor.click(); setTimeout(() => URL.revokeObjectURL(objectUrl), 1000); });
   start();
 })();
