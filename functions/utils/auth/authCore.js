@@ -6,14 +6,13 @@
 import { fetchSecurityConfig } from '../sysConfig.js';
 import { validateApiToken } from './tokenValidator.js';
 import { getDatabase } from '../databaseAdapter.js';
-import { verifyPassword } from './passwordHash.js';
 import { validateSession } from './sessionManager.js';
 
 /**
  * 认证范围常量
  * - 'admin'  : 仅管理员（admin session / API Token）
- * - 'user'   : 仅用户（user session / admin session / API Token / authCode）
- * - 'either' : 管理员或用户任一通过即可（所有认证方式）
+ * - 'user'   : 原版用户接口仅管理员会话 / 管理员 API Token 可用；Studio 用户使用独立接口
+ * - 'either' : 管理员会话 / 管理员 API Token 可用
  */
 export const AUTH_SCOPE = {
     ADMIN: 'admin',
@@ -45,37 +44,20 @@ async function checkAdmin({ env, request, adminConfigured }) {
 }
 
 /**
- * 用户会话/凭据认证
- * 优先级：admin session → user session → authCode
+ * 原版用户接口只接受管理员会话，避免旧共用口令绕过 Studio 的个人额度。
  *
  * @returns {Promise<{authorized: boolean, authType: string|null}|null>}
  *          认证通过/失败返回结果，无法判定返回 null
  */
-async function checkUser({ env, request, url, authCodeConfigured, userAuthCode }) {
+async function checkUser({ env, request }) {
     // admin session（管理员身份也可访问用户资源）
     const adminSession = await validateSession(env, request, 'admin');
     if (adminSession.valid) {
         return AUTHORIZED('admin');
     }
 
-    // user session
-    const userSession = await validateSession(env, request, 'user');
-    if (userSession.valid) {
-        return AUTHORIZED('user');
-    }
-
-    // authCode
-    if (!authCodeConfigured) {
-        return AUTHORIZED('user'); // 未配置用户认证，视为用户身份放行
-    }
-
-    if (url) {
-        const authCode = extractAuthCode(url, request);
-        if (authCode && await verifyPassword(authCode, userAuthCode)) {
-            return AUTHORIZED('user');
-        }
-    }
-
+    // Studio 用户只通过 /api/studio/* 操作自己的相册和额度。
+    // 旧版共用 user_session / authCode 不绑定个人额度，不能继续进入上传接口。
     return UNAUTHORIZED;
 }
 
@@ -101,10 +83,7 @@ export async function authenticate({
     const securityConfig = await fetchSecurityConfig(env);
     const adminUsername = securityConfig.auth.admin.adminUsername;
     const adminPassword = securityConfig.auth.admin.adminPassword;
-    const userAuthCode = securityConfig.auth.user.authCode;
-
     const adminConfigured = !!(adminUsername && adminUsername.trim()) || !!(adminPassword && adminPassword.trim());
-    const authCodeConfigured = !!(userAuthCode && userAuthCode.trim());
 
     // --- API Token 验证（公共层，所有 scope 通用） ---
     const db = getDatabase(env);
@@ -115,7 +94,7 @@ export async function authenticate({
 
     // --- 会话/凭据验证 ---
     const adminCtx = { env, request, adminConfigured };
-    const userCtx = { env, request, url, authCodeConfigured, userAuthCode };
+    const userCtx = { env, request };
 
     if (authScope === AUTH_SCOPE.ADMIN) {
         return (await checkAdmin(adminCtx)) || UNAUTHORIZED;
@@ -130,38 +109,4 @@ export async function authenticate({
     if (adminResult?.authorized) return adminResult;
 
     return await checkUser(userCtx);
-}
-
-/**
- * 从多个来源提取 authCode
- * 优先级：URL 参数 > Referer > 请求头 > Cookie
- */
-function extractAuthCode(url, request) {
-    let authCode = url.searchParams.get('authCode');
-
-    if (!authCode) {
-        const referer = request.headers.get('Referer');
-        if (referer) {
-            try {
-                const refererUrl = new URL(referer);
-                authCode = new URLSearchParams(refererUrl.search).get('authCode');
-            } catch (e) {
-                console.error('Invalid referer URL:', e);
-            }
-        }
-    }
-
-    if (!authCode) {
-        authCode = request.headers.get('authCode');
-    }
-
-    if (!authCode) {
-        const cookies = request.headers.get('Cookie');
-        if (cookies) {
-            const match = cookies.match(new RegExp('(^| )authCode=([^;]+)'));
-            authCode = match ? decodeURIComponent(match[2]) : null;
-        }
-    }
-
-    return authCode;
 }
