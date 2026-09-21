@@ -3,7 +3,7 @@ import { imageLinks, replaceLinks } from './theme-utils.js';
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = { user: null, albums: [], albumId: '', files: [], hasMore: false, rawJson: '', jsonName: '', links: [], replacements: new Map(), application: null };
+  const state = { user: null, albums: [], albumId: '', files: [], hasMore: false, selectedFiles: new Set(), uploading: false, rawJson: '', jsonName: '', links: [], replacements: new Map(), application: null };
   const fmt = n => n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1024).toFixed(1)} KB`;
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
   function notice(message, error = false) { const el = $('notice'); el.textContent = message; el.classList.toggle('error', error); el.classList.remove('hidden'); clearTimeout(notice.timer); notice.timer = setTimeout(() => el.classList.add('hidden'), 6500); }
@@ -14,6 +14,14 @@ import { imageLinks, replaceLinks } from './theme-utils.js';
     return data;
   }
   const jsonOptions = data => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  function applicationFeedback(message, error = false) { const el = $('application-feedback'); el.textContent = message; el.classList.toggle('error', error); }
+  function renderSelection() {
+    const count = state.selectedFiles.size;
+    $('selection-count').textContent = `已选择 ${count} 张`;
+    $('select-all-files').disabled = state.files.length === 0 || count === state.files.length;
+    $('clear-selected-files').disabled = count === 0;
+    $('copy-selected-files').disabled = count === 0;
+  }
   function showMember() { $('guest').classList.toggle('hidden', !!state.user); $('member').classList.toggle('hidden', !state.user); $('logout').classList.toggle('hidden', !state.user); }
   function renderProfile() {
     const u = state.user;
@@ -36,8 +44,9 @@ import { imageLinks, replaceLinks } from './theme-utils.js';
     $('current-album-name').textContent = state.albums.find(a => a.id === state.albumId)?.name || '我的相册';
   }
   function renderFiles() {
-    $('file-grid').innerHTML = state.files.length ? state.files.map(f => `<div class="file-card"><img loading="lazy" src="${escapeHtml(f.url)}" alt="${escapeHtml(f.file_name)}"><strong title="${escapeHtml(f.file_name)}">${escapeHtml(f.file_name)}</strong><div class="file-actions"><button data-copy="${escapeHtml(f.url)}">复制图链</button><button data-delete="${escapeHtml(f.id)}">删除</button></div></div>`).join('') : '<div class="empty">相册里还空空的。上传第一张图片吧 ♡</div>';
+    $('file-grid').innerHTML = state.files.length ? state.files.map(f => `<div class="file-card ${state.selectedFiles.has(f.id) ? 'selected' : ''}"><label class="file-select"><input type="checkbox" data-file-id="${escapeHtml(f.id)}" ${state.selectedFiles.has(f.id) ? 'checked' : ''}><span>选中</span></label><img loading="lazy" src="${escapeHtml(f.url)}" alt="${escapeHtml(f.file_name)}"><strong title="${escapeHtml(f.file_name)}">${escapeHtml(f.file_name)}</strong><div class="file-actions"><button data-copy="${escapeHtml(f.url)}">复制图链</button><button data-delete="${escapeHtml(f.id)}">删除</button></div></div>`).join('') : '<div class="empty">相册里还空空的。上传第一张图片吧 ♡</div>';
     $('more-files').classList.toggle('hidden', !state.hasMore);
+    renderSelection();
   }
   async function refreshProfile() { const data = await api('me'); state.user = data.user; state.application = data.application; renderProfile(); showMember(); }
   async function refreshAlbums() {
@@ -45,7 +54,7 @@ import { imageLinks, replaceLinks } from './theme-utils.js';
     if (!state.albums.some(a => a.id === state.albumId)) state.albumId = state.albums[0]?.id || '';
     renderAlbums(); await refreshFiles();
   }
-  async function refreshFiles(more = false) { if (!state.albumId) { state.files = []; state.hasMore = false; renderFiles(); return; } const offset = more ? state.files.length : 0; const data = await api(`files?album=${encodeURIComponent(state.albumId)}&offset=${offset}`); state.files = more ? [...state.files, ...data.files] : data.files; state.hasMore = data.hasMore; renderFiles(); }
+  async function refreshFiles(more = false) { if (!more) state.selectedFiles.clear(); if (!state.albumId) { state.files = []; state.hasMore = false; renderFiles(); return; } const offset = more ? state.files.length : 0; const data = await api(`files?album=${encodeURIComponent(state.albumId)}&offset=${offset}`); state.files = more ? [...state.files, ...data.files] : data.files; state.hasMore = data.hasMore; renderFiles(); }
   async function start() {
     try { const c = await api('config'); $('discord-login').classList.toggle('disabled', !c.discordEnabled); $('discord-login').href = c.discordEnabled ? '/api/studio/oauth/start' : '#'; $('discord-hint').textContent = c.discordEnabled ? '请先加入管理员指定的 Discord 社区。' : '站长尚未填写 Discord 应用和社区 ID；可使用管理员发放的账号。'; } catch (e) { $('discord-hint').textContent = e.message; }
     const error = new URLSearchParams(location.search).get('error'); if (error === 'not_member') { notice('这个 Discord 账号尚未加入指定社区，暂时不能登录。', true); history.replaceState(null, '', '/studio/'); }
@@ -57,9 +66,60 @@ import { imageLinks, replaceLinks } from './theme-utils.js';
   $('album-form').addEventListener('submit', async event => { if (event.submitter?.value !== 'create') return; event.preventDefault(); try { const data = await api('albums', jsonOptions({ name: $('album-name').value })); $('album-dialog').close(); $('album-name').value = ''; state.albumId = data.id; await refreshAlbums(); notice('新相册已经摆好啦 ✿'); } catch (e) { notice(e.message, true); } });
   $('album-list').addEventListener('click', async event => { const button = event.target.closest('[data-id]'); if (!button) return; state.albumId = button.dataset.id; renderAlbums(); await refreshFiles(); });
   $('more-files').addEventListener('click', async () => { try { await refreshFiles(true); } catch (e) { notice(e.message, true); } });
-  $('upload-input').addEventListener('change', async event => { const files = [...event.target.files]; if (!state.albumId) return notice('请先创建相册', true); for (let i = 0; i < files.length; i++) { $('upload-status').textContent = `正在上传 ${i + 1} / ${files.length}：${files[i].name}`; const form = new FormData(); form.set('file', files[i]); form.set('albumId', state.albumId); try { await api('files', { method: 'POST', body: form }); } catch (e) { notice(`${files[i].name}：${e.message}`, true); } } event.target.value = ''; $('upload-status').textContent = ''; await Promise.all([refreshProfile(), refreshAlbums()]); });
+  async function uploadFiles(files) {
+    if (!files.length || state.uploading) return;
+    if (!state.albumId) { $('upload-status').textContent = '请先创建相册'; return; }
+    const allowed = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
+    state.uploading = true;
+    let success = 0;
+    const failures = [];
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        $('upload-status').textContent = `正在上传 ${i + 1} / ${files.length}：${file.name}`;
+        if (!allowed.has(file.type)) { failures.push(`${file.name}：不是支持的图片格式`); continue; }
+        if (file.size > 25 * 1048576) { failures.push(`${file.name}：单张图片不能超过 25 MB`); continue; }
+        const form = new FormData();
+        form.set('file', file);
+        form.set('albumId', state.albumId);
+        try { await api('files', { method: 'POST', body: form }); success++; }
+        catch (e) { failures.push(`${file.name}：${e.message}`); }
+      }
+      await Promise.all([refreshProfile(), refreshAlbums()]);
+      $('upload-status').textContent = `已上传 ${success} / ${files.length} 张${failures.length ? `；${failures[0]}${failures.length > 1 ? `，另有 ${failures.length - 1} 张失败` : ''}` : ' ♡'}`;
+    } catch (e) { $('upload-status').textContent = `上传后刷新失败：${e.message}`; }
+    finally { state.uploading = false; }
+  }
+  $('upload-input').addEventListener('change', event => { uploadFiles([...event.target.files]); event.target.value = ''; });
+  const imageDrop = $('image-drop');
+  imageDrop.addEventListener('click', () => $('upload-input').click());
+  imageDrop.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $('upload-input').click(); } });
+  imageDrop.addEventListener('dragenter', event => { event.preventDefault(); imageDrop.classList.add('drag-active'); });
+  imageDrop.addEventListener('dragover', event => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; imageDrop.classList.add('drag-active'); });
+  imageDrop.addEventListener('dragleave', event => { if (!imageDrop.contains(event.relatedTarget)) imageDrop.classList.remove('drag-active'); });
+  imageDrop.addEventListener('drop', event => { event.preventDefault(); imageDrop.classList.remove('drag-active'); uploadFiles([...event.dataTransfer.files]); });
+  $('file-grid').addEventListener('change', event => { const box = event.target.closest('[data-file-id]'); if (!box) return; if (box.checked) state.selectedFiles.add(box.dataset.fileId); else state.selectedFiles.delete(box.dataset.fileId); box.closest('.file-card').classList.toggle('selected', box.checked); renderSelection(); });
+  $('select-all-files').addEventListener('click', () => { state.files.forEach(file => state.selectedFiles.add(file.id)); renderFiles(); });
+  $('clear-selected-files').addEventListener('click', () => { state.selectedFiles.clear(); renderFiles(); });
+  $('copy-selected-files').addEventListener('click', async () => { const links = state.files.filter(file => state.selectedFiles.has(file.id)).map(file => file.url); if (!links.length) return; try { await navigator.clipboard.writeText(links.join('\n')); notice(`已复制 ${links.length} 条图链，每行一条 ✿`); } catch { notice('复制失败，请检查浏览器的剪贴板权限', true); } });
   $('file-grid').addEventListener('click', async event => { const copy = event.target.closest('[data-copy]'); if (copy) { try { await navigator.clipboard.writeText(copy.dataset.copy); notice('图链已复制到剪贴板 ✿'); } catch { notice('复制失败，请在图片上点右键复制链接', true); } return; } const del = event.target.closest('[data-delete]'); if (!del || !confirm('确定删除这张图片吗？删除后原图链会失效。')) return; try { await api(`files/${encodeURIComponent(del.dataset.delete)}`, { method: 'DELETE' }); await Promise.all([refreshProfile(), refreshAlbums()]); notice('图片已删除'); } catch (e) { notice(e.message, true); } });
-  $('application-form').addEventListener('submit', async event => { event.preventDefault(); const form = new FormData(event.currentTarget); try { await api('applications', jsonOptions(Object.fromEntries(form))); await refreshProfile(); notice('申请信已寄出，等待管理员审核 ✉'); } catch (e) { notice(e.message, true); } });
+  $('application-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const formEl = event.currentTarget;
+    const values = Object.fromEntries(new FormData(formEl));
+    values.discordId = String(values.discordId || '').trim();
+    values.workTitle = String(values.workTitle || '').trim();
+    values.workUrl = String(values.workUrl || '').trim();
+    if (!/^\d{15,25}$/.test(values.discordId)) { applicationFeedback('请填写完整的 Discord 数字 ID（15–25 位）。你现在填写的可能是用户名或不完整的 ID。', true); formEl.elements.discordId.focus(); return; }
+    if (!values.workTitle) { applicationFeedback('请填写作品名称。', true); formEl.elements.workTitle.focus(); return; }
+    if (values.workUrl) { try { const url = new URL(values.workUrl); if (url.protocol !== 'https:') throw new Error(); } catch { applicationFeedback('作品链接请填写以 https:// 开头的完整网址，或留空。', true); formEl.elements.workUrl.focus(); return; } }
+    const button = formEl.querySelector('button[type=submit]');
+    button.disabled = true;
+    applicationFeedback('正在提交申请信…');
+    try { await api('applications', jsonOptions(values)); await refreshProfile(); applicationFeedback('申请信已寄出，等待管理员审核 ✉'); }
+    catch (e) { applicationFeedback(e.message, true); }
+    finally { button.disabled = false; }
+  });
   async function loadJson(file) {
     if (!file || !file.name.toLowerCase().endsWith('.json')) return notice('请选择 .json 美化文件', true);
     if (file.size > 5 * 1048576) return notice('JSON 文件不能超过 5 MB', true);
