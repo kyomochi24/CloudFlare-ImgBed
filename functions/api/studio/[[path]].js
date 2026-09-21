@@ -13,12 +13,14 @@ const SESSION_SECONDS = 7 * 86400;
 const DEFAULT_GUILD_IDS = '1291925535324110879,1379304008157499423';
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
 const EXTENSIONS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif', 'image/bmp': 'bmp' };
+const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 const json = (data, status = 200, extra = {}) => new Response(JSON.stringify(data), {
   status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...extra }
 });
 const fail = (message, status = 400) => json({ error: message }, status);
 const uid = () => crypto.randomUUID();
+const shortObjectKey = extension => `studio/${Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => SHORT_ID_ALPHABET[byte % SHORT_ID_ALPHABET.length]).join('')}.${extension}`;
 const monthKey = () => new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 7);
 const sha = async text => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))).map(x => x.toString(16).padStart(2, '0')).join('');
 const cookie = (token, age = SESSION_SECONDS) => `studio_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`;
@@ -159,8 +161,8 @@ function acceptedSource(raw, env) {
   let u;
   try { u = new URL(raw); } catch { throw new Error('图片链接无效'); }
   if (u.protocol !== 'https:' || (u.port && u.port !== '443') || !u.hostname.includes('.') || u.username || u.password || /^\d+\.\d+\.\d+\.\d+$/.test(u.hostname) || u.hostname.includes(':') || u.hostname.endsWith('.local')) throw new Error('仅支持公开的 HTTPS 图片链接');
-  const hosts = plain(env.STUDIO_IMPORT_HOSTS || 'iili.io,i.postimg.cc').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
-  if (!hosts.includes(u.hostname.toLowerCase())) throw new Error(`暂不允许从 ${u.hostname} 导入，请联系管理员添加来源域名`);
+  const hosts = new Set(['iili.io', 'i.postimg.cc', 'img.baidu.re', ...plain(env.STUDIO_IMPORT_HOSTS).split(',').map(x => x.trim().toLowerCase()).filter(Boolean)]);
+  if (!hosts.has(u.hostname.toLowerCase())) throw new Error(`暂不允许从 ${u.hostname} 导入，请联系管理员添加来源域名`);
   return u.toString();
 }
 async function fetchImage(raw, env) {
@@ -168,6 +170,7 @@ async function fetchImage(raw, env) {
   for (let i = 0; i < 4; i++) {
     const res = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(20000), headers: { Accept: 'image/*' } });
     if ([301, 302, 303, 307, 308].includes(res.status)) { url = acceptedSource(new URL(res.headers.get('Location'), url).toString(), env); continue; }
+    if (res.status === 403) throw new Error('图片源站拒绝服务器读取（403）；请先把图片下载到电脑，再上传到相册');
     if (!res.ok) throw new Error(`源站返回 ${res.status}`);
     const sizeHint = Number(res.headers.get('Content-Length') || 0);
     if (sizeHint > SINGLE_FILE_LIMIT) throw new Error('单张图片超过 25 MB');
@@ -183,8 +186,8 @@ async function fetchImage(raw, env) {
     }
     const bytes = new Uint8Array(total); let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-    const type = (res.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
-    if (!IMAGE_TYPES.has(type)) throw new Error('源文件不是受支持的图片');
+    const type = actualImageType(bytes);
+    if (!type || !IMAGE_TYPES.has(type)) throw new Error('源文件不是受支持的图片');
     return { bytes, type, sourceUrl: raw };
   }
   throw new Error('源站重定向次数过多');
@@ -198,7 +201,7 @@ async function saveImage(context, db, user, albumId, file) {
   if (bytes.byteLength < 1 || bytes.byteLength > SINGLE_FILE_LIMIT || (!user.is_super && (!IMAGE_TYPES.has(type) || actualImageType(bytes) !== type))) return fail('普通账号只接受 25 MB 以内的 PNG、JPEG、WebP、GIF、AVIF 或 BMP 原图', 400);
   if (!await reserve(db, user, bytes.byteLength)) return fail('上传额度不足', 403);
   const extension = user.is_super ? (cleanName(name).match(/\.([a-z0-9]{1,10})$/i)?.[1] || 'bin').toLowerCase() : EXTENSIONS[type];
-  const id = `studio/${user.id}/${album.id}/${uid()}.${extension}`;
+  const id = shortObjectKey(extension);
   const metadata = studioMetadata(request, user, album, cleanName(name) || `file.${extension}`, type, bytes.byteLength);
   try {
     await env.img_r2.put(id, bytes, { httpMetadata: { contentType: type } });
@@ -213,7 +216,7 @@ async function saveImage(context, db, user, albumId, file) {
   }
 }
 function studioMetadata(request, user, album, name, type, size) {
-  return { FileName: name, FileType: type, FileSize: (size / 1048576).toFixed(2), FileSizeBytes: size, UploadIP: request.headers.get('CF-Connecting-IP') || '', UploadAddress: '', ListType: 'None', TimeStamp: Date.now(), Label: 'None', Directory: `studio/${user.id}/${album.id}/`, Channel: 'CloudflareR2', ChannelName: 'Studio', OwnerId: user.id, Tags: [] };
+  return { FileName: name, FileType: type, FileSize: (size / 1048576).toFixed(2), FileSizeBytes: size, UploadIP: request.headers.get('CF-Connecting-IP') || '', UploadAddress: '', ListType: 'None', TimeStamp: Date.now(), Label: 'None', Directory: 'studio/', Channel: 'CloudflareR2', ChannelName: 'Studio', OwnerId: user.id, Tags: [] };
 }
 async function multipart(context, db, user, route, method) {
   const { request, env } = context;
@@ -230,7 +233,7 @@ async function multipart(context, db, user, route, method) {
     const partSize = Math.max(MIN_PART_SIZE, Math.ceil(size / MAX_PARTS / 1048576) * 1048576);
     if (partSize > MAX_PART_SIZE) return fail('文件超过当前 Cloudflare 请求与 R2 分片可处理的大小', 413);
     const extension = (name.match(/\.([a-z0-9]{1,10})$/i)?.[1] || 'bin').toLowerCase();
-    const key = `studio/${user.id}/${album.id}/${uid()}.${extension}`;
+    const key = shortObjectKey(extension);
     const upload = await env.img_r2.createMultipartUpload(key, { httpMetadata: { contentType: type } });
     const id = uid();
     try {
@@ -340,6 +343,26 @@ async function handleUser(context, db, user, route, method) {
     try { file = await fetchImage(sourceUrl, env); } catch (e) { return fail(e.message, 422); }
     const name = cleanName(new URL(sourceUrl).pathname.split('/').pop()) || 'imported-image';
     return saveImage(context, db, user, String(data.albumId || ''), { ...file, name });
+  }
+  if (route.startsWith('files/') && method === 'PATCH') {
+    const id = decodeURIComponent(route.slice(6));
+    const file = await db.prepare('SELECT id,file_name FROM studio_files WHERE id=? AND user_id=?').bind(id, user.id).first();
+    if (!file) return fail('文件不存在', 404);
+    const data = await bodyJson(request);
+    const name = cleanName(data.name);
+    if (!name) return fail('请输入文件名称');
+    const metadataDb = getDatabase(env);
+    const record = await metadataDb.getWithMetadata(id);
+    if (!record?.metadata) return fail('文件元数据不存在，请联系管理员', 500);
+    const metadata = { ...record.metadata, FileName: name };
+    await db.prepare('UPDATE studio_files SET file_name=? WHERE id=? AND user_id=?').bind(name, id, user.id).run();
+    try { await metadataDb.put(id, record.value ?? '', { metadata }); }
+    catch (error) {
+      await db.prepare('UPDATE studio_files SET file_name=? WHERE id=? AND user_id=?').bind(file.file_name, id, user.id).run();
+      throw error;
+    }
+    context.waitUntil(addFileToIndex(context, id, metadata));
+    return json({ ok: true, name });
   }
   if (route.startsWith('files/') && method === 'DELETE') {
     const id = decodeURIComponent(route.slice(6));

@@ -59,7 +59,6 @@ import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=202609
     $('quota-detail').textContent = superUser ? '站内没有上传次数、类型或总容量限制；单次传输仍受 Cloudflare 平台限制。' : creator ? `剩余 ${fmt(Math.max(0, limit - used))} · 已保存 ${fmt(u.storedBytes)}，旧图不计入本月额度` : `剩余 ${fmt(Math.max(0, limit - used))} · 删除图片可释放空间`;
     $('upload-input').accept = superUser ? '' : 'image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp';
     $('upload-label-text').textContent = superUser ? '＋ 上传文件' : '＋ 上传原图';
-    $('image-drop').setAttribute('aria-label', superUser ? '选择或拖入任意文件' : '选择或拖入图片');
     const pending = state.application?.status === 'pending';
     $('application-form').classList.toggle('hidden', creator || superUser);
     $('application-form').querySelector('button[type=submit]').disabled = pending;
@@ -73,7 +72,7 @@ import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=202609
   }
   function renderFiles() {
     const previewTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
-    $('file-grid').innerHTML = state.files.length ? state.files.map(f => `<div class="file-card"><button class="file-image-select" type="button" data-select="${escapeHtml(f.id)}" aria-label="选择文件：${escapeHtml(f.file_name)}">${previewTypes.has(f.mime_type) ? `<img loading="lazy" src="${escapeHtml(f.url)}" alt="">` : '<span class="file-placeholder" aria-hidden="true">✦<small>文件</small></span>'}<span class="selection-badge" aria-hidden="true"></span></button><strong title="${escapeHtml(f.file_name)}">${escapeHtml(f.file_name)}</strong><div class="file-actions"><button type="button" data-copy="${escapeHtml(f.url)}">复制图链</button><button type="button" data-delete="${escapeHtml(f.id)}">删除</button></div></div>`).join('') : '<div class="empty">相册里还空空的。上传第一张图片吧 ♡</div>';
+    $('file-grid').innerHTML = state.files.length ? state.files.map(f => `<div class="file-card"><button class="file-image-select" type="button" data-select="${escapeHtml(f.id)}" aria-label="选择文件：${escapeHtml(f.file_name)}">${previewTypes.has(f.mime_type) ? `<img loading="lazy" src="${escapeHtml(f.url)}" alt="">` : '<span class="file-placeholder" aria-hidden="true">✦<small>文件</small></span>'}<span class="selection-badge" aria-hidden="true"></span></button><strong title="${escapeHtml(f.file_name)}">${escapeHtml(f.file_name)}</strong><div class="file-actions"><button type="button" data-copy="${escapeHtml(f.url)}">复制图链</button><button type="button" data-rename="${escapeHtml(f.id)}">重命名</button><button type="button" data-delete="${escapeHtml(f.id)}">删除</button></div></div>`).join('') : '<div class="empty">相册里还空空的。上传第一张图片吧 ♡</div>';
     $('more-files').classList.toggle('hidden', !state.hasMore);
     renderSelection();
   }
@@ -179,17 +178,54 @@ import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=202609
     finally { state.uploading = false; }
   }
   $('upload-input').addEventListener('change', event => { uploadFiles([...event.target.files]); event.target.value = ''; });
-  const imageDrop = $('image-drop');
-  imageDrop.addEventListener('click', () => $('upload-input').click());
-  imageDrop.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $('upload-input').click(); } });
-  imageDrop.addEventListener('dragenter', event => { event.preventDefault(); imageDrop.classList.add('drag-active'); });
-  imageDrop.addEventListener('dragover', event => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; imageDrop.classList.add('drag-active'); });
-  imageDrop.addEventListener('dragleave', event => { if (!imageDrop.contains(event.relatedTarget)) imageDrop.classList.remove('drag-active'); });
-  imageDrop.addEventListener('drop', event => { event.preventDefault(); imageDrop.classList.remove('drag-active'); uploadFiles([...event.dataTransfer.files]); });
   $('select-all-files').addEventListener('click', () => { state.files.forEach(file => state.selectedFiles.add(file.id)); renderSelection(); });
   $('clear-selected-files').addEventListener('click', () => { state.selectedFiles.clear(); renderSelection(); });
   $('copy-selected-files').addEventListener('click', async () => { const byId = new Map(state.files.map(file => [file.id, file.url])); const links = [...state.selectedFiles].map(id => byId.get(id)).filter(Boolean); if (!links.length) return; try { await navigator.clipboard.writeText(links.join('\n')); notice(`已复制 ${links.length} 条图链，每行一条 ✿`); } catch { notice('复制失败，请检查浏览器的剪贴板权限', true); } });
-  $('file-grid').addEventListener('click', async event => { const select = event.target.closest('[data-select]'); if (select) { if (state.selectedFiles.has(select.dataset.select)) state.selectedFiles.delete(select.dataset.select); else state.selectedFiles.add(select.dataset.select); renderSelection(); return; } const copy = event.target.closest('[data-copy]'); if (copy) { try { await navigator.clipboard.writeText(copy.dataset.copy); notice('图链已复制到剪贴板 ✿'); } catch { notice('复制失败，请在图片上点右键复制链接', true); } return; } const del = event.target.closest('[data-delete]'); if (!del || !confirm('确定删除这张图片吗？删除后原图链会失效。')) return; try { await api(`files/${encodeURIComponent(del.dataset.delete)}`, { method: 'DELETE' }); await Promise.all([refreshProfile(), refreshAlbums()]); notice('图片已删除'); } catch (e) { notice(e.message, true); } });
+  $('file-grid').addEventListener('click', async event => {
+    const select = event.target.closest('[data-select]');
+    if (select) {
+      if (state.selectedFiles.has(select.dataset.select)) state.selectedFiles.delete(select.dataset.select);
+      else state.selectedFiles.add(select.dataset.select);
+      renderSelection();
+      return;
+    }
+    const copy = event.target.closest('[data-copy]');
+    if (copy) {
+      try { await navigator.clipboard.writeText(copy.dataset.copy); notice('图链已复制到剪贴板 ✿'); }
+      catch { notice('复制失败，请检查浏览器的剪贴板权限', true); }
+      return;
+    }
+    const rename = event.target.closest('[data-rename]');
+    if (rename) {
+      const file = state.files.find(item => item.id === rename.dataset.rename);
+      if (!file) return;
+      $('rename-dialog').dataset.fileId = file.id;
+      $('rename-name').value = file.file_name;
+      $('rename-dialog').showModal();
+      $('rename-name').focus();
+      return;
+    }
+    const del = event.target.closest('[data-delete]');
+    if (!del || !confirm('确定删除这张图片吗？删除后原图链会失效。')) return;
+    try { await api(`files/${encodeURIComponent(del.dataset.delete)}`, { method: 'DELETE' }); await Promise.all([refreshProfile(), refreshAlbums()]); notice('图片已删除'); }
+    catch (e) { notice(e.message, true); }
+  });
+  $('close-rename').addEventListener('click', () => $('rename-dialog').close());
+  $('rename-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const id = $('rename-dialog').dataset.fileId;
+    const button = event.currentTarget.querySelector('button[type=submit]');
+    button.disabled = true;
+    try {
+      const renamed = await api(`files/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: $('rename-name').value }) });
+      const file = state.files.find(item => item.id === id);
+      if (file) file.file_name = renamed.name;
+      renderFiles();
+      $('rename-dialog').close();
+      notice('文件名称已保存，图链没有改变 ✿');
+    } catch (e) { notice(e.message, true); }
+    finally { button.disabled = false; }
+  });
   $('application-form').addEventListener('submit', async event => {
     event.preventDefault();
     const formEl = event.currentTarget;
