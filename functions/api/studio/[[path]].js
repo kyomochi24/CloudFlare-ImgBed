@@ -24,6 +24,8 @@ const fail = (message, status = 400) => json({ error: message }, status);
 const uid = () => crypto.randomUUID();
 const shortObjectKey = extension => `studio/${Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => SHORT_ID_ALPHABET[byte % SHORT_ID_ALPHABET.length]).join('')}.${extension}`;
 const monthKey = () => new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 7);
+const dayKey = () => new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+const cutoutLimits = user => user.is_super ? { daily: 30, batch: 8 } : user.tier === 'pikachu' ? { daily: 30, batch: 4 } : { daily: 10, batch: 2 };
 const sha = async text => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))).map(x => x.toString(16).padStart(2, '0')).join('');
 const cookie = (token, age = SESSION_SECONDS) => `studio_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`;
 const getCookie = (request, key) => request.headers.get('Cookie')?.split(';').map(s => s.trim()).find(s => s.startsWith(`${key}=`))?.slice(key.length + 1) || '';
@@ -33,10 +35,19 @@ const safeUser = u => ({ id: u.id, username: u.username, discordId: u.discord_id
 const userSelect = 'SELECT u.*, EXISTS(SELECT 1 FROM studio_super_users su WHERE su.user_id=u.id) AS is_super FROM studio_users u';
 
 function announcementData(value = {}) {
+  const contentRuns = Array.isArray(value.contentRuns) ? value.contentRuns.slice(0, 200).map(run => ({
+    text: String(run?.text || '').slice(0, 5000),
+    color: /^#[0-9a-f]{6}$/i.test(run?.color) ? run.color : '',
+    backgroundColor: /^#[0-9a-f]{6}$/i.test(run?.backgroundColor) ? run.backgroundColor : '',
+    fontSize: Number.isInteger(run?.fontSize) && run.fontSize >= 12 && run.fontSize <= 48 ? run.fontSize : null
+  })).filter(run => run.text) : [];
+  let remaining = 5000;
+  for (const run of contentRuns) { run.text = run.text.slice(0, remaining); remaining -= run.text.length; }
   return {
     enabled: value.enabled === true,
     title: String(value.title || '').trim().slice(0, 100),
     content: String(value.content || '').trim().slice(0, 5000),
+    contentRuns: contentRuns.filter(run => run.text),
     backgroundColor: /^#[0-9a-f]{6}$/i.test(value.backgroundColor) ? value.backgroundColor : '#fff8f2',
     textColor: /^#[0-9a-f]{6}$/i.test(value.textColor) ? value.textColor : '#604c56',
     imageUrls: Array.isArray(value.imageUrls) ? value.imageUrls.slice(0, 10).filter(url => {
@@ -311,6 +322,23 @@ async function multipart(context, db, user, route, method) {
 }
 async function handleUser(context, db, user, route, method) {
   const { request, env } = context;
+  if (route === 'cutout/quota' && method === 'GET') {
+    const day = dayKey();
+    const { daily, batch } = cutoutLimits(user);
+    const row = await db.prepare('SELECT used FROM studio_cutout_usage WHERE user_id=? AND day_key=?').bind(user.id, day).first();
+    const used = row?.used || 0;
+    return json({ dayKey: day, used, dailyLimit: daily, batchLimit: batch, remaining: Math.max(0, daily - used) });
+  }
+  if (route === 'cutout/claim' && method === 'POST') {
+    const { count } = await bodyJson(request);
+    const { daily, batch } = cutoutLimits(user);
+    if (!Number.isInteger(count) || count < 1 || count > batch) return fail(`你的身份一次最多抠 ${batch} 张`);
+    const day = dayKey();
+    const result = await db.prepare('INSERT INTO studio_cutout_usage(user_id,day_key,used) VALUES(?,?,?) ON CONFLICT(user_id,day_key) DO UPDATE SET used=used+excluded.used WHERE used+excluded.used<=?').bind(user.id, day, count, daily).run();
+    if (!result.meta?.changes) return fail('今天的抠图次数已经用完啦，明天北京时间 00:00 重置', 429);
+    const row = await db.prepare('SELECT used FROM studio_cutout_usage WHERE user_id=? AND day_key=?').bind(user.id, day).first();
+    return json({ dayKey: day, used: row.used, dailyLimit: daily, batchLimit: batch, remaining: daily - row.used });
+  }
   if (route === 'me' && method === 'GET') {
     if (user.tier === 'pikachu' && !user.is_super) await reconcileCreatorMonth(db, user.id);
     const fresh = await db.prepare(`${userSelect} WHERE u.id=?`).bind(user.id).first();

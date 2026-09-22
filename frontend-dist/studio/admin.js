@@ -12,6 +12,72 @@
   function notice(message, error = false) { const el = $('admin-notice'); el.textContent = message; el.classList.toggle('error', error); el.classList.remove('hidden'); setTimeout(() => el.classList.add('hidden'), 6500); }
   async function api(path, method = 'GET', data) { const response = await fetch(`/api/studio/admin/${path}`, { method, credentials: 'same-origin', headers: data ? { 'Content-Type': 'application/json' } : {}, body: data ? JSON.stringify(data) : undefined }); const value = await response.json().catch(() => ({})); if (!response.ok) throw new Error(value.error || `请求失败 (${response.status})`); return value; }
   const imageUrls = () => $('announcement-image-urls').value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+  const editor = $('announcement-rich-editor');
+  let selectedRange = null;
+  function renderRuns(container, runs) {
+    container.replaceChildren();
+    for (const run of runs) {
+      const span = document.createElement('span'); span.textContent = run.text;
+      if (run.color) { span.dataset.color = run.color; span.style.color = run.color; }
+      if (run.backgroundColor) { span.dataset.backgroundColor = run.backgroundColor; span.style.backgroundColor = run.backgroundColor; }
+      if (run.fontSize) { span.dataset.fontSize = run.fontSize; span.style.fontSize = `${run.fontSize}px`; }
+      container.append(span);
+    }
+  }
+  function readRuns() {
+    const runs = [];
+    const push = (text, style) => {
+      if (!text) return;
+      const last = runs.at(-1);
+      if (last && last.color === style.color && last.backgroundColor === style.backgroundColor && last.fontSize === style.fontSize) last.text += text;
+      else runs.push({ text, ...style });
+    };
+    const walk = (node, inherited = { color: '', backgroundColor: '', fontSize: null }) => {
+      if (node.nodeType === Node.TEXT_NODE) { push(node.textContent, inherited); return; }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      if (node.tagName === 'BR') { push('\n', inherited); return; }
+      const style = { color: node.dataset?.color || inherited.color, backgroundColor: node.dataset?.backgroundColor || inherited.backgroundColor, fontSize: Number(node.dataset?.fontSize) || inherited.fontSize };
+      for (const child of node.childNodes) walk(child, style);
+      if (['DIV', 'P'].includes(node.tagName) && node !== editor) push('\n', style);
+    };
+    for (const child of editor.childNodes) walk(child);
+    if (runs.at(-1)?.text.endsWith('\n')) runs.at(-1).text = runs.at(-1).text.replace(/\n+$/, '');
+    return runs.filter(run => run.text);
+  }
+  function validSelection() {
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : selectedRange;
+    return range && !range.collapsed && editor.contains(range.commonAncestorContainer) ? range : null;
+  }
+  document.addEventListener('selectionchange', () => { const range = validSelection(); if (range) selectedRange = range.cloneRange(); });
+  function styleSelection(clear = false) {
+    const range = validSelection() || selectedRange;
+    if (!range || range.collapsed || !editor.contains(range.commonAncestorContainer)) return notice('请先选中公告里想修改的文字', true);
+    const fragment = range.extractContents();
+    const text = fragment.textContent;
+    if (!text) return;
+    const span = document.createElement('span'); span.textContent = text;
+    if (!clear) {
+      span.dataset.color = $('rich-color').value; span.style.color = span.dataset.color;
+      span.dataset.backgroundColor = $('rich-background').value; span.style.backgroundColor = span.dataset.backgroundColor;
+      span.dataset.fontSize = String(Math.max(12, Math.min(48, Number($('rich-size').value) || 18))); span.style.fontSize = `${span.dataset.fontSize}px`;
+    }
+    range.insertNode(span); selectedRange = null; editor.focus(); announcementPreview();
+  }
+  $('rich-apply').addEventListener('click', () => styleSelection());
+  $('rich-clear').addEventListener('click', () => styleSelection(true));
+  editor.addEventListener('paste', event => {
+    event.preventDefault();
+    const text = event.clipboardData.getData('text/plain');
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    if (!editor.contains(range.commonAncestorContainer)) return;
+    range.deleteContents();
+    const node = document.createTextNode(text); range.insertNode(node);
+    range.setStartAfter(node); range.collapse(true); selection.removeAllRanges(); selection.addRange(range);
+    announcementPreview();
+  });
   function announcementPreview() {
     const preview = $('announcement-preview');
     preview.style.backgroundColor = $('announcement-background').value;
@@ -20,7 +86,9 @@
     const title = document.createElement('h3');
     title.textContent = $('announcement-title-input').value || '甜品屋公告';
     const content = document.createElement('div');
-    content.textContent = $('announcement-content-input').value || '公告内容会显示在这里 ♡';
+    const runs = readRuns();
+    if (runs.length) renderRuns(content, runs);
+    else content.textContent = '公告内容会显示在这里 ♡';
     preview.append(title, content);
     const gallery = document.createElement('div');
     gallery.className = 'announcement-preview-images';
@@ -41,7 +109,8 @@
   function renderAnnouncement(news) {
     $('announcement-enabled').checked = !!news.enabled;
     $('announcement-title-input').value = news.title || '';
-    $('announcement-content-input').value = news.content || '';
+    if (Array.isArray(news.contentRuns) && news.contentRuns.length) renderRuns(editor, news.contentRuns);
+    else editor.textContent = news.content || '';
     $('announcement-background').value = news.backgroundColor || '#fff8f2';
     $('announcement-text-color').value = news.textColor || '#604c56';
     $('announcement-image-urls').value = (news.imageUrls || []).join('\n');
@@ -86,7 +155,10 @@
     button.disabled = true;
     $('announcement-feedback').textContent = '正在保存…';
     try {
-      await api('announcement', 'PATCH', { enabled: $('announcement-enabled').checked, title: $('announcement-title-input').value, content: $('announcement-content-input').value, backgroundColor: $('announcement-background').value, textColor: $('announcement-text-color').value, imageUrls: urls });
+      const runs = readRuns();
+      const content = runs.map(run => run.text).join('');
+      if (content.length > 5000) throw new Error('公告内容最多 5000 个字');
+      await api('announcement', 'PATCH', { enabled: $('announcement-enabled').checked, title: $('announcement-title-input').value, content, contentRuns: runs, backgroundColor: $('announcement-background').value, textColor: $('announcement-text-color').value, imageUrls: urls });
       $('announcement-feedback').textContent = '公告已保存 ✿';
       notice('公告已保存，访客刷新页面即可看到');
     } catch (error) { $('announcement-feedback').textContent = error.message; notice(error.message, true); }

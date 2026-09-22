@@ -1,4 +1,5 @@
 import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=20260922d';
+import { initStudioTools } from './tools.js?v=20260922g';
 
 (() => {
   'use strict';
@@ -86,6 +87,7 @@ import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=202609
     renderSelection();
   }
   async function refreshProfile() { const data = await api('me'); state.user = data.user; state.application = data.application; renderProfile(); showMember(); }
+  const studioTools = initStudioTools({ api, state, refreshProfile, refreshAlbums, notice });
   async function refreshAlbums() {
     const data = await api('albums'); state.albums = data.albums;
     if (!state.albums.some(a => a.id === state.albumId)) state.albumId = state.albums[0]?.id || '';
@@ -97,7 +99,16 @@ import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=202609
     const news = announcement || {};
     $('announcement-open').classList.toggle('has-news', !!news.enabled);
     $('announcement-title').textContent = news.enabled ? news.title || '甜品屋公告' : '暂时没有公告 ✿';
-    $('announcement-content').textContent = news.enabled ? news.content || '来甜品屋玩吧 ♡' : '站长还没有发布新公告。';
+    const content = $('announcement-content'); content.replaceChildren();
+    if (news.enabled && Array.isArray(news.contentRuns) && news.contentRuns.length) {
+      for (const run of news.contentRuns) {
+        const span = document.createElement('span'); span.textContent = run.text;
+        if (run.color) span.style.color = run.color;
+        if (run.backgroundColor) span.style.backgroundColor = run.backgroundColor;
+        if (run.fontSize) span.style.fontSize = `${run.fontSize}px`;
+        content.append(span);
+      }
+    } else content.textContent = news.enabled ? news.content || '来甜品屋玩吧 ♡' : '站长还没有发布新公告。';
     $('announcement-dialog').style.backgroundColor = news.backgroundColor || '#fff8f2';
     $('announcement-dialog').style.color = news.textColor || '#604c56';
     const gallery = $('announcement-images');
@@ -110,14 +121,22 @@ import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=202609
       image.referrerPolicy = 'no-referrer';
       gallery.append(image);
     }
+    if (news.enabled) {
+      const key = `studio_announcement_seen_${news.updatedAt || 'initial'}`;
+      let seen = false;
+      try { seen = localStorage.getItem(key) === '1'; } catch { /* Storage may be blocked. */ }
+      if (!seen && !$('announcement-dialog').open) $('announcement-dialog').showModal();
+      $('announcement-dialog').addEventListener('close', () => { try { localStorage.setItem(key, '1'); } catch { /* Private mode. */ } }, { once: true });
+    }
   }
   async function start() {
     try { await loadAnnouncement(); } catch { /* The rest of the site remains usable if news is unavailable. */ }
     try { const c = await api('config'); $('discord-login').classList.toggle('disabled', !c.discordEnabled); $('discord-login').href = c.discordEnabled ? '/api/studio/oauth/start' : '#'; $('discord-hint').textContent = c.discordEnabled ? '请先加入管理员指定的 Discord 社区。' : '站长尚未填写 Discord 应用和社区 ID；可使用管理员发放的账号。'; } catch (e) { $('discord-hint').textContent = e.message; }
     const error = new URLSearchParams(location.search).get('error'); if (error === 'not_member') { notice('这个 Discord 账号尚未加入指定社区，暂时不能登录。', true); history.replaceState(null, '', '/studio/'); }
     try { await refreshProfile(); await refreshAlbums(); } catch { state.user = null; showMember(); }
+    if (state.user) try { await studioTools.refreshQuota(); } catch (error) { $('cutout-quota').textContent = error.message; }
   }
-  $('local-login').addEventListener('submit', async event => { event.preventDefault(); const b = event.currentTarget.querySelector('button'); b.disabled = true; try { const form = new FormData(event.currentTarget); const data = await api('login', jsonOptions({ username: form.get('username'), password: form.get('password') })); state.user = data.user; await refreshProfile(); await refreshAlbums(); event.currentTarget.reset(); notice('欢迎回家 ♡'); } catch (e) { notice(e.message, true); } finally { b.disabled = false; } });
+  $('local-login').addEventListener('submit', async event => { event.preventDefault(); const b = event.currentTarget.querySelector('button'); b.disabled = true; try { const form = new FormData(event.currentTarget); const data = await api('login', jsonOptions({ username: form.get('username'), password: form.get('password') })); state.user = data.user; await refreshProfile(); await refreshAlbums(); await studioTools.refreshQuota(); event.currentTarget.reset(); notice('欢迎回家 ♡'); } catch (e) { notice(e.message, true); } finally { b.disabled = false; } });
   $('logout').addEventListener('click', async () => { try { await api('logout', { method: 'POST' }); state.user = null; showMember(); notice('下次再来玩呀 ♡'); } catch (e) { notice(e.message, true); } });
   $('new-album').addEventListener('click', () => $('album-dialog').showModal());
   $('announcement-open').addEventListener('click', () => $('announcement-dialog').showModal());

@@ -78,3 +78,9 @@ CREATE TABLE IF NOT EXISTS studio_upload_parts (
   etag TEXT NOT NULL,
   PRIMARY KEY(upload_id, part_number)
 );
+CREATE TABLE IF NOT EXISTS studio_cutout_usage (
+  user_id TEXT NOT NULL REFERENCES studio_users(id),
+  day_key TEXT NOT NULL,
+  used INTEGER NOT NULL DEFAULT 0 CHECK(used >= 0),
+  PRIMARY KEY(user_id, day_key)
+);
