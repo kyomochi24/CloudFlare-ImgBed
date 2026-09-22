@@ -1,4 +1,4 @@
-import { colorRgb, exportTheme, inspectTheme } from './candy-utils.js?v=20260923a';
+import { colorRgb, exportTheme, inspectTheme, mapColor } from './candy-utils.js?v=20260923b';
 
 const $ = id => document.getElementById(id);
 const safe = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
@@ -25,7 +25,9 @@ const shortName = (name, index) => `${String(name || '糖果色').replace(/[\\/:
 
 export function initCandy({ api, state, refreshProfile, refreshAlbums, notice }) {
   let project = null, busy = false;
+  let mappedFrom = -1;
   const selected = new Set();
+  const selectedColors = new Set();
   const status = message => { $('candy-status').textContent = message; };
   function release() { for (const item of project?.images || []) if (item.overrideUrl) URL.revokeObjectURL(item.overrideUrl); }
   async function refreshQuota() {
@@ -45,11 +47,17 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
   function preview(item) { return item.overrideUrl || item.url; }
   function updateSelection() {
     $('candy-selected-count').textContent = `已选 ${selected.size} 张`;
+    $('candy-palette-count').textContent = selected.size ? `正在调整 ${selected.size} 张图片` : '先选择图片再调色';
     $('candy-images').querySelectorAll('[data-image-row]').forEach(row => row.classList.toggle('is-selected', selected.has(Number(row.dataset.imageRow))));
     const first = project?.images[[...selected][0]];
-    if (first) for (const [key, slider, output, unit] of [['hue','candy-hue','candy-hue-value','°'],['sat','candy-sat','candy-sat-value','%'],['light','candy-light','candy-light-value','%']]) {
-      $(slider).value = first[key]; $(output).textContent = `${first[key]}${unit}`;
+    if (first) for (const [key, slider, number] of [['hue','candy-hue','candy-hue-number'],['sat','candy-sat','candy-sat-number'],['light','candy-light','candy-light-number']]) {
+      $(slider).value = first[key]; $(number).value = first[key];
     }
+  }
+  function showPalette(show) {
+    $('candy-palette').classList.toggle('hidden', !show);
+    $('candy-palette-open').setAttribute('aria-expanded', String(show));
+    $('candy-palette-open').textContent = show ? '✿ 收起悬浮调色盘' : '✿ 打开悬浮调色盘';
   }
   function updatePreview() {
     $('candy-images').querySelectorAll('[data-after]').forEach(img => {
@@ -70,11 +78,17 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
   }
   function renderColors() {
     $('candy-color-count').textContent = `共 ${project.colors.length} 处`;
-    $('candy-colors').innerHTML = project.colors.map((color, i) => `<div class="candy-color-row" data-color-row="${i}"><span>${i + 1}. ${safe(color.label)}</span><span title="原值：${safe(color.original)}"><i class="candy-swatch" style="background:${safe(color.hex)}"></i>原色 RGB(${colorRgb(color.original)})</span><label><input type="color" data-color="${i}" value="${safe(project.changes[i] || color.hex)}" aria-label="修改第 ${i + 1} 处颜色"><code>RGB(${colorRgb(project.changes[i] || color.hex)})</code><button type="button" data-color-reset="${i}">还原</button></label></div>`).join('') || '<div class="hint">没有识别到十六进制或 RGB / RGBA 颜色。</div>';
+    const scroll = $('candy-colors').scrollTop;
+    $('candy-colors').innerHTML = project.colors.map((color, i) => `<div class="candy-color-row ${mappedFrom === i ? 'is-map-source' : ''}" data-color-row="${i}"><label class="candy-color-pick"><input type="checkbox" data-color-pick="${i}" ${selectedColors.has(i) ? 'checked' : ''}><span>${i + 1}. ${safe(color.label)}</span></label><span title="原值：${safe(color.original)}"><i class="candy-swatch" style="background:${safe(color.hex)}"></i>原色 RGB(${colorRgb(color.original)})</span><div class="candy-color-edit"><label><input type="color" data-color="${i}" value="${safe(project.changes[i] || color.hex)}" aria-label="修改第 ${i + 1} 处颜色"><code>RGB(${colorRgb(project.changes[i] || color.hex)})</code></label><button type="button" data-color-map="${i}" title="将原色到当前颜色的变化应用到勾选的其他颜色">用作映射样本</button><button type="button" data-color-reset="${i}">还原</button></div></div>`).join('') || '<div class="hint">没有识别到十六进制或 RGB / RGBA 颜色。</div>';
+    $('candy-colors').scrollTop = scroll;
+    $('candy-color-selected-count').textContent = `已选 ${selectedColors.size} 处颜色`;
   }
   function render() {
     $('candy-editor').classList.remove('hidden'); $('candy-title').value = project.name;
+    $('candy-clear').disabled = false;
     selected.clear(); if (project.images.length) selected.add(0);
+    selectedColors.clear(); mappedFrom = -1; $('candy-map-status').textContent = '';
+    project.colors.forEach((_, i) => selectedColors.add(i));
     renderImages(); renderColors(); status(`找到 ${project.images.length} 张图、${project.colors.length} 处颜色。预览与草稿仅保存在本机，最终导出时才上传新图片。`);
   }
   async function load(file) {
@@ -91,6 +105,15 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
   $('candy-drop').addEventListener('dragover', event => { event.preventDefault(); event.currentTarget.classList.add('dragging'); });
   $('candy-drop').addEventListener('dragleave', event => event.currentTarget.classList.remove('dragging'));
   $('candy-drop').addEventListener('drop', event => { event.preventDefault(); event.currentTarget.classList.remove('dragging'); load(event.dataTransfer.files[0]); });
+  $('candy-clear').addEventListener('click', () => {
+    if (!project || busy) return;
+    if (!confirm('清除当前打开的美化和未保存的调整？已保存的草稿与相册图片会保留。')) return;
+    release(); project = null; selected.clear(); selectedColors.clear(); mappedFrom = -1; showPalette(false);
+    $('candy-editor').classList.add('hidden'); $('candy-clear').disabled = true;
+    $('candy-input').value = ''; $('candy-drafts').value = '';
+    $('candy-images').replaceChildren(); $('candy-colors').replaceChildren(); $('candy-map-status').textContent = ''; status('');
+    notice('当前美化已清除，可以选择另一份美化 ♡');
+  });
   $('candy-open-draft').addEventListener('click', async () => {
     const id = $('candy-drafts').value; if (!id) return notice('先选一份本机草稿', true);
     try {
@@ -127,7 +150,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
   });
   $('candy-images').addEventListener('click', async event => {
     const button = event.target.closest('button'); if (!button || !project) return;
-    if (button.dataset.edit !== undefined) { selected.clear(); selected.add(Number(button.dataset.edit)); renderImages(); $('candy-hue').focus(); }
+    if (button.dataset.edit !== undefined) { selected.clear(); selected.add(Number(button.dataset.edit)); renderImages(); showPalette(true); $('candy-hue-number').focus(); }
     if (button.dataset.reset !== undefined) {
       const item = project.images[Number(button.dataset.reset)];
       if (item.overrideUrl) URL.revokeObjectURL(item.overrideUrl);
@@ -148,28 +171,77 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
   $('candy-select-all').addEventListener('click', () => { project?.images.forEach((_, i) => selected.add(i)); renderImages(); });
   $('candy-select-none').addEventListener('click', () => { selected.clear(); renderImages(); });
   $('candy-reset-selected').addEventListener('click', () => { for (const n of selected) { const item = project.images[n]; if (item.overrideUrl) URL.revokeObjectURL(item.overrideUrl); Object.assign(item, { hue: 0, sat: 100, light: 100, override: null, overrideUrl: '', keep: false, savedUrl: '' }); } renderImages(); });
-  for (const [key, slider, output, unit] of [['hue','candy-hue','candy-hue-value','°'],['sat','candy-sat','candy-sat-value','%'],['light','candy-light','candy-light-value','%']]) {
-    $(slider).addEventListener('input', event => {
-      $(output).textContent = `${event.target.value}${unit}`;
+  $('candy-palette-open').addEventListener('click', () => showPalette($('candy-palette').classList.contains('hidden')));
+  $('candy-palette-close').addEventListener('click', () => showPalette(false));
+  let drag = null;
+  const palette = $('candy-palette'), handle = $('candy-palette-handle');
+  handle.addEventListener('pointerdown', event => {
+    if (event.target.closest('button')) return;
+    const box = palette.getBoundingClientRect();
+    drag = { x: event.clientX - box.left, y: event.clientY - box.top };
+    handle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+  handle.addEventListener('pointermove', event => {
+    if (!drag) return;
+    palette.style.left = `${Math.max(8, Math.min(innerWidth - palette.offsetWidth - 8, event.clientX - drag.x))}px`;
+    palette.style.top = `${Math.max(8, Math.min(innerHeight - palette.offsetHeight - 8, event.clientY - drag.y))}px`;
+    palette.style.right = 'auto';
+  });
+  handle.addEventListener('pointerup', () => { drag = null; });
+  handle.addEventListener('pointercancel', () => { drag = null; });
+  window.addEventListener('resize', () => {
+    if (!palette.style.left) return;
+    palette.style.left = `${Math.max(8, Math.min(innerWidth - palette.offsetWidth - 8, parseFloat(palette.style.left)))}px`;
+    palette.style.top = `${Math.max(8, Math.min(innerHeight - palette.offsetHeight - 8, parseFloat(palette.style.top)))}px`;
+  });
+  for (const [key, slider, number] of [['hue','candy-hue','candy-hue-number'],['sat','candy-sat','candy-sat-number'],['light','candy-light','candy-light-number']]) {
+    function change(value) {
+      if (!Number.isFinite(value)) return;
+      const next = Math.max(Number($(slider).min), Math.min(Number($(slider).max), Math.round(value)));
+      $(slider).value = next; $(number).value = next;
       if (!project || !selected.size) return status('先选中一张或多张图片再调色。');
-      for (const n of selected) { const item = project.images[n]; item[key] = Number(event.target.value); item.savedUrl = ''; item.keep = false; }
+      for (const n of selected) { const item = project.images[n]; item[key] = next; item.savedUrl = ''; item.keep = false; }
       updatePreview();
       $('candy-images').querySelectorAll('[data-image-row]').forEach(row => {
         const n = Number(row.dataset.imageRow);
         if (selected.has(n)) row.querySelector('.candy-row-top small:last-child').textContent = `色相 ${project.images[n].hue}° · 饱和度 ${project.images[n].sat}% · 亮度 ${project.images[n].light}%`;
       });
-    });
+    }
+    $(slider).addEventListener('input', event => change(Number(event.target.value)));
+    $(number).addEventListener('input', event => { if (event.target.value !== '') change(Number(event.target.value)); });
+    $(number).addEventListener('change', event => { if (event.target.value === '') event.target.value = $(slider).value; else change(Number(event.target.value)); });
   }
+  $('candy-color-select-all').addEventListener('click', () => { project?.colors.forEach((_, i) => selectedColors.add(i)); renderColors(); });
+  $('candy-color-select-none').addEventListener('click', () => { selectedColors.clear(); renderColors(); });
+  $('candy-colors').addEventListener('change', event => {
+    const input = event.target.closest('[data-color-pick]'); if (!input) return;
+    const n = Number(input.dataset.colorPick);
+    input.checked ? selectedColors.add(n) : selectedColors.delete(n);
+    $('candy-color-selected-count').textContent = `已选 ${selectedColors.size} 处颜色`;
+  });
   $('candy-colors').addEventListener('input', event => {
     const input = event.target.closest('[data-color]'); if (!input || !project) return;
     const n = Number(input.dataset.color), row = input.closest('.candy-color-row');
     project.changes[n] = input.value; row.querySelector('code').textContent = `RGB(${colorRgb(input.value)})`;
   });
   $('candy-colors').addEventListener('click', event => {
-    const button = event.target.closest('[data-color-reset]'); if (!button || !project) return;
-    const n = Number(button.dataset.colorReset), row = button.closest('.candy-color-row');
-    delete project.changes[n]; row.querySelector('input[type=color]').value = project.colors[n].hex;
-    row.querySelector('code').textContent = `RGB(${colorRgb(project.colors[n].hex)})`;
+    const button = event.target.closest('button'); if (!button || !project) return;
+    if (button.dataset.colorMap !== undefined) {
+      const n = Number(button.dataset.colorMap), before = project.colors[n].hex, after = project.changes[n] || before;
+      if (before === after) return notice('请先把这处颜色从 A 调成 B，再用它作为映射样本', true);
+      const targets = [...selectedColors].filter(i => i !== n);
+      if (!targets.length) return notice('请先勾选至少一处其他颜色作为映射目标', true);
+      for (const i of targets) project.changes[i] = mapColor(project.colors[i].hex, before, after);
+      mappedFrom = n; renderColors();
+      const message = `已按第 ${n + 1} 处 A → B 的变化，映射 ${targets.length} 处所选颜色。原色和未勾选的颜色没有更改。`;
+      $('candy-map-status').textContent = message; status(message);
+    }
+    if (button.dataset.colorReset !== undefined) {
+      const n = Number(button.dataset.colorReset), row = button.closest('.candy-color-row');
+      delete project.changes[n]; row.querySelector('input[type=color]').value = project.colors[n].hex;
+      row.querySelector('code').textContent = `RGB(${colorRgb(project.colors[n].hex)})`;
+    }
   });
   async function sourceBlob(url) {
     const source = new URL(url);

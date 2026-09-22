@@ -26,6 +26,34 @@ export function colorRgb(value) {
   return `${parseInt(hex.slice(1, 3), 16)}, ${parseInt(hex.slice(3, 5), 16)}, ${parseInt(hex.slice(5, 7), 16)}`;
 }
 
+function toHsl(hex) {
+  const rgb = [1, 3, 5].map(start => parseInt(colorHex(hex).slice(start, start + 2), 16) / 255);
+  const max = Math.max(...rgb), min = Math.min(...rgb), delta = max - min;
+  const light = (max + min) / 2;
+  if (!delta) return [0, 0, light];
+  const sat = delta / (1 - Math.abs(2 * light - 1));
+  const hue = max === rgb[0] ? ((rgb[1] - rgb[2]) / delta) % 6 : max === rgb[1] ? (rgb[2] - rgb[0]) / delta + 2 : (rgb[0] - rgb[1]) / delta + 4;
+  return [((hue * 60) + 360) % 360, sat, light];
+}
+
+function fromHsl(hue, sat, light) {
+  const chroma = (1 - Math.abs(2 * light - 1)) * sat;
+  const section = ((hue % 360) + 360) % 360 / 60;
+  const x = chroma * (1 - Math.abs(section % 2 - 1));
+  const channels = section < 1 ? [chroma, x, 0] : section < 2 ? [x, chroma, 0] : section < 3 ? [0, chroma, x] : section < 4 ? [0, x, chroma] : section < 5 ? [x, 0, chroma] : [chroma, 0, x];
+  return `#${channels.map(channel => Math.round((channel + light - chroma / 2) * 255).toString(16).padStart(2, '0')).join('')}`;
+}
+
+// Apply the HSL difference A -> B to another original color. Alpha is retained by colorLike during export.
+export function mapColor(original, sampleBefore, sampleAfter) {
+  const [aHue, aSat, aLight] = toHsl(sampleBefore);
+  const [bHue, bSat, bLight] = toHsl(sampleAfter);
+  const [hue, sat, light] = toHsl(original);
+  const hueDelta = ((bHue - aHue + 540) % 360) - 180;
+  const clamp = value => Math.max(0, Math.min(1, value));
+  return fromHsl(hue + hueDelta, clamp(sat + bSat - aSat), clamp(light + bLight - aLight));
+}
+
 export function inspectTheme(raw) {
   const theme = JSON.parse(raw);
   if (!theme || typeof theme !== 'object' || Array.isArray(theme)) throw new Error('美化 JSON 顶层必须是对象');

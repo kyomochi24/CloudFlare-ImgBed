@@ -9,8 +9,8 @@
   <title>浅浅丘的甜品屋 · 把喜欢的图片好好收藏</title>
   <link rel="stylesheet" href="/studio/style.css?v=20260922f">
   <link rel="stylesheet" href="/studio/tools.css?v=20260922i">
-  <link rel="stylesheet" href="/studio/candy.css?v=20260922a">
-  <script src="/studio/app.js?v=20260923a" type="module"></script>
+  <link rel="stylesheet" href="/studio/candy.css?v=20260923b">
+  <script src="/studio/app.js?v=20260923b" type="module"></script>
 </head>
 <body>
   <picture class="site-wallpaper" aria-hidden="true"><source media="(max-width: 820px)" srcset="https://771553.xyz/file/1790000025921_9c1668d8be042af7b0d0fdea1b4c1c20.jpg"><img src="https://771553.xyz/file/1789999968170_%E5%BE%AE%E4%BF%A1%E5%9B%BE%E7%89%87_20260921221136_547_164.jpg" alt="" referrerpolicy="no-referrer"></picture>
@@ -48,15 +48,16 @@
       <section class="card candy-card">
         <p class="candy-ethics">♡ 注意：如果不是原作者本人，二改前请先取得授权。严禁未经原作者允许的二改。</p>
         <p id="candy-quota" class="hint">正在读取今日改色份数…</p>
-        <div class="candy-start"><label class="dropzone" id="candy-drop">✿ 选择或拖入美化 .json<input id="candy-input" type="file" accept=".json,application/json" hidden></label><select id="candy-drafts" aria-label="选择本机草稿"><option value="">本机保存的草稿</option></select><button id="candy-open-draft" class="drawer-button" type="button">打开草稿</button></div>
+        <div class="candy-start"><label class="dropzone" id="candy-drop">✿ 选择或拖入美化 .json<input id="candy-input" type="file" accept=".json,application/json" hidden></label><button id="candy-clear" class="drawer-button" type="button" disabled>清除所选美化</button><select id="candy-drafts" aria-label="选择本机草稿"><option value="">本机保存的草稿</option></select><button id="candy-open-draft" class="drawer-button" type="button">打开草稿</button></div>
         <div id="candy-editor" class="hidden">
           <div class="candy-topline"><label>新美化名称<input id="candy-title" maxlength="100" placeholder="例如：像素甜点屋·薄荷糖"></label><div class="candy-top-actions"><button id="candy-save-draft" class="drawer-button" type="button">保存草稿 ♡</button><button id="candy-export" class="button primary" type="button">生成并下载新美化 ↓</button></div></div>
           <p id="candy-status" class="hint" role="status" aria-live="polite"></p>
           <div class="candy-head"><h3>图链与图片 <small id="candy-image-count"></small></h3><p>左边是原图，右边是实时预览。改色只作用于导出的新文件。</p></div>
-          <div class="candy-batch"><button id="candy-select-all" class="drawer-button" type="button">全选图片</button><button id="candy-select-none" class="drawer-button" type="button">取消选择</button><span id="candy-selected-count">已选 0 张</span><label>色相 <input id="candy-hue" type="range" min="-180" max="180" value="0"><output id="candy-hue-value">0°</output></label><label>饱和度 <input id="candy-sat" type="range" min="0" max="200" value="100"><output id="candy-sat-value">100%</output></label><label>亮度 <input id="candy-light" type="range" min="0" max="200" value="100"><output id="candy-light-value">100%</output></label><button id="candy-reset-selected" class="drawer-button" type="button">所选恢复原色</button></div>
+          <div class="candy-batch"><button id="candy-select-all" class="drawer-button" type="button">全选图片</button><button id="candy-select-none" class="drawer-button" type="button">取消选择</button><span id="candy-selected-count">已选 0 张</span><button id="candy-palette-open" class="drawer-button candy-palette-trigger" type="button" aria-controls="candy-palette" aria-expanded="false">✿ 打开悬浮调色盘</button><button id="candy-reset-selected" class="drawer-button" type="button">所选恢复原色</button></div>
+          <aside id="candy-palette" class="candy-palette hidden" aria-label="图片调色盘"><div id="candy-palette-handle" class="candy-palette-handle"><strong>✿ 丘丘调色盘</strong><span>拖动这里移动</span><button id="candy-palette-close" type="button" aria-label="关闭调色盘">×</button></div><div class="candy-palette-body"><p id="candy-palette-count">先选择图片再调色</p><label>色相 <input id="candy-hue" type="range" min="-180" max="180" value="0"><input id="candy-hue-number" type="number" min="-180" max="180" step="1" value="0" aria-label="色相数值"><output id="candy-hue-value">°</output></label><label>饱和度 <input id="candy-sat" type="range" min="0" max="200" value="100"><input id="candy-sat-number" type="number" min="0" max="200" step="1" value="100" aria-label="饱和度数值"><output id="candy-sat-value">%</output></label><label>亮度 <input id="candy-light" type="range" min="0" max="200" value="100"><input id="candy-light-number" type="number" min="0" max="200" step="1" value="100" aria-label="亮度数值"><output id="candy-light-value">%</output></label></div></aside>
           <div id="candy-images" class="candy-image-list"></div>
           <button id="candy-download-all" class="drawer-button" type="button">下载全部原图 ↓</button>
-          <div class="candy-head"><h3>美化里的颜色 <small id="candy-color-count"></small></h3><p>按 JSON 中出现的顺序排列，可逐个更换；右栏展示改后的 RGB。</p></div><div id="candy-colors" class="candy-color-list"></div>
+          <div class="candy-head"><h3>美化里的颜色 <small id="candy-color-count"></small></h3><p>按 JSON 中出现的顺序排列。先把一个样本色 A 调成 B，再点“用作映射样本”，即可将相同的色相、饱和度和亮度变化应用到勾选的其他颜色。</p></div><div class="candy-color-tools"><button id="candy-color-select-all" class="drawer-button" type="button">全选颜色</button><button id="candy-color-select-none" class="drawer-button" type="button">取消选择</button><span id="candy-color-selected-count">已选 0 处颜色</span><span class="hint">映射会覆盖勾选颜色的当前改色；原色始终不变。</span></div><p id="candy-map-status" class="candy-map-status" role="status" aria-live="polite"></p><div id="candy-colors" class="candy-color-list"></div>
         </div>
       </section>
       <div class="section-heading"><span>06 / THE CREATOR CLUB</span><h2>申请成为皮卡丘 <em>♡</em></h2><p>提交作品给管理员审核。通过后，每个自然月可上传 1 GB，已经上传的图片会一直保留。</p></div>

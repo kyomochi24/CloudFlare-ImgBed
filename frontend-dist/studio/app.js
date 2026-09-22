@@ -1,6 +1,6 @@
 import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=20260922d';
 import { initStudioTools } from './tools.js?v=20260922j';
-import { initCandy } from './candy.js?v=20260923a';
+import { initCandy } from './candy.js?v=20260923b';
 
 (() => {
   'use strict';
