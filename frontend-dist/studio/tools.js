@@ -27,9 +27,35 @@ export function initStudioTools({ api, state, refreshProfile, refreshAlbums, not
   }
 
   function dropTarget(element, callback) {
-    for (const name of ['dragenter', 'dragover']) element.addEventListener(name, event => { event.preventDefault(); element.classList.add('dragging'); });
-    for (const name of ['dragleave', 'drop']) element.addEventListener(name, event => { event.preventDefault(); element.classList.remove('dragging'); });
-    element.addEventListener('drop', event => callback([...event.dataTransfer.files]));
+    const input = element.querySelector('input[type=file]');
+    element.addEventListener('click', event => { if (event.target !== input) input.click(); });
+    element.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); input.click(); }
+    });
+    for (const name of ['dragenter', 'dragover']) element.addEventListener(name, event => {
+      event.preventDefault(); event.stopPropagation();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+      element.classList.add('dragging');
+    });
+    element.addEventListener('dragleave', event => {
+      event.preventDefault();
+      if (!element.contains(event.relatedTarget)) element.classList.remove('dragging');
+    });
+    element.addEventListener('drop', async event => {
+      event.preventDefault(); event.stopPropagation(); element.classList.remove('dragging');
+      const files = [...(event.dataTransfer?.files || [])];
+      if (files.length) return callback(files);
+      const rawUrl = event.dataTransfer?.getData('text/uri-list')?.split('\n').find(line => /^https?:\/\//i.test(line)) || event.dataTransfer?.getData('text/plain');
+      try {
+        const url = new URL(rawUrl);
+        if (!['https:', 'http:'].includes(url.protocol)) throw new Error();
+        const response = await fetch(url.href, { credentials: 'omit' });
+        if (!response.ok || !response.headers.get('content-type')?.startsWith('image/')) throw new Error();
+        const blob = await response.blob();
+        if (blob.size > 25 * 1048576) throw new Error();
+        return callback([new File([blob], decodeURIComponent(url.pathname.split('/').pop()) || '拖入的图片.png', { type: blob.type })]);
+      } catch { notice('未收到可用的图片文件。跨站图片请先下载到电脑，再拖入这里。', true); }
+    });
   }
   function renderQuota() {
     const q = cutout.quota;
@@ -62,19 +88,21 @@ export function initStudioTools({ api, state, refreshProfile, refreshAlbums, not
     const box = $('cutout-results'); box.replaceChildren();
     for (const [index, item] of cutout.results.entries()) {
       const card = document.createElement('article'); card.className = 'tool-result-card';
-      card.innerHTML = `<div class="tool-result-title">${safe(item.file.name)}</div><div class="compare-stage checker"><img class="compare-after" alt="透明抠图结果"><img class="compare-before" alt="原图"><span class="compare-label">← 原图　｜　透明结果 →</span></div><label class="compare-control">拖动查看前后对比<input type="range" min="0" max="100" value="50" aria-label="查看第 ${index + 1} 张图片的抠图前后对比"></label><div class="tool-result-actions"><a class="button secondary" download="${safe(fileStem(item.file.name))}-抠图.png">下载透明 PNG ↓</a><button class="button primary save-cutout" type="button">保存到当前相册 ♡</button></div><p class="tool-status" role="status"></p>`;
+      card.innerHTML = `<div class="tool-result-title">${safe(item.file.name)} <span class="cutout-output-tag">透明结果 · 保存的是这张</span></div><div class="compare-stage checker"><img class="compare-after" alt="透明抠图结果"><img class="compare-before" alt="原图"><span class="compare-label">透明 PNG 预览 ♡</span></div><label class="compare-control">拖动对比：左端是抠图结果，右端是原图<input type="range" min="0" max="100" value="0" aria-label="查看第 ${index + 1} 张图片的抠图前后对比"></label><div class="tool-result-actions"><a class="button secondary" download="${safe(fileStem(item.file.name))}-抠图.png">下载透明 PNG ↓</a><button class="button primary save-cutout" type="button">保存这张透明 PNG ♡</button></div><p class="tool-status" role="status"></p>`;
       card.querySelector('.compare-after').src = item.outputUrl;
       card.querySelector('.compare-before').src = item.originalUrl;
       card.querySelector('a').href = item.outputUrl;
       card.querySelector('input[type=range]').addEventListener('input', event => card.querySelector('.compare-before').style.clipPath = `inset(0 ${100 - Number(event.target.value)}% 0 0)`);
-      card.querySelector('.compare-before').style.clipPath = 'inset(0 50% 0 0)';
+      card.querySelector('.compare-before').style.clipPath = 'inset(0 100% 0 0)';
       card.querySelector('.save-cutout').addEventListener('click', async event => {
         const button = event.currentTarget;
         if (!state.albumId) return notice('请先创建相册', true);
         button.disabled = true; card.querySelector('.tool-status').textContent = '正在保存…';
         try {
-          await saveBlob(item.blob, `${fileStem(item.file.name)}-抠图.png`, state.albumId);
-          button.textContent = '已保存 ♡'; card.querySelector('.tool-status').textContent = '已放进当前相册';
+          const saved = await saveBlob(item.blob, `${fileStem(item.file.name)}-抠图.png`, state.albumId);
+          button.textContent = '已保存透明 PNG ♡';
+          const link = document.createElement('a'); link.href = saved.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = '打开相册里的透明 PNG ↗';
+          card.querySelector('.tool-status').replaceChildren('已放进当前相册 · ', link);
           await Promise.all([refreshProfile(), refreshAlbums()]);
         } catch (error) { button.disabled = false; card.querySelector('.tool-status').textContent = error.message; }
       });

@@ -1,5 +1,5 @@
 import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=20260922d';
-import { initStudioTools } from './tools.js?v=20260922g';
+import { initStudioTools } from './tools.js?v=20260922h';
 
 (() => {
   'use strict';
@@ -82,7 +82,7 @@ import { initStudioTools } from './tools.js?v=20260922g';
   }
   function renderFiles() {
     const previewTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
-    $('file-grid').innerHTML = state.files.length ? state.files.map(f => `<div class="file-card"><button class="file-image-select" type="button" data-select="${escapeHtml(f.id)}" aria-label="选择文件：${escapeHtml(f.file_name)}">${previewTypes.has(f.mime_type) ? `<img loading="lazy" src="${escapeHtml(f.url)}" alt="">` : '<span class="file-placeholder" aria-hidden="true">✦<small>文件</small></span>'}<span class="selection-badge" aria-hidden="true"></span></button><strong title="${escapeHtml(f.file_name)}">${escapeHtml(f.file_name)}</strong><div class="file-actions"><button type="button" data-copy="${escapeHtml(f.url)}">复制图链</button><button type="button" data-rename="${escapeHtml(f.id)}">重命名</button><button type="button" data-delete="${escapeHtml(f.id)}">删除</button></div></div>`).join('') : '<div class="empty">相册里还空空的。上传第一张图片吧 ♡</div>';
+    $('file-grid').innerHTML = state.files.length ? state.files.map(f => `<div class="file-card"><button class="file-image-select ${f.mime_type === 'image/png' ? 'checker' : ''}" type="button" data-select="${escapeHtml(f.id)}" aria-label="选择文件：${escapeHtml(f.file_name)}">${previewTypes.has(f.mime_type) ? `<img loading="lazy" src="${escapeHtml(f.url)}" alt="">` : '<span class="file-placeholder" aria-hidden="true">✦<small>文件</small></span>'}${f.file_name.endsWith('-抠图.png') ? '<span class="cutout-card-badge" aria-hidden="true">透明 PNG</span>' : ''}<span class="selection-badge" aria-hidden="true"></span></button><strong title="${escapeHtml(f.file_name)}">${escapeHtml(f.file_name)}</strong><div class="file-actions"><button type="button" data-copy="${escapeHtml(f.url)}">复制图链</button><button type="button" data-rename="${escapeHtml(f.id)}">重命名</button><button type="button" data-delete="${escapeHtml(f.id)}">删除</button></div></div>`).join('') : '<div class="empty">相册里还空空的。上传第一张图片吧 ♡</div>';
     $('more-files').classList.toggle('hidden', !state.hasMore);
     renderSelection();
   }
@@ -136,7 +136,7 @@ import { initStudioTools } from './tools.js?v=20260922g';
     try { await refreshProfile(); await refreshAlbums(); } catch { state.user = null; showMember(); }
     if (state.user) try { await studioTools.refreshQuota(); } catch (error) { $('cutout-quota').textContent = error.message; }
   }
-  $('local-login').addEventListener('submit', async event => { event.preventDefault(); const b = event.currentTarget.querySelector('button'); b.disabled = true; try { const form = new FormData(event.currentTarget); const data = await api('login', jsonOptions({ username: form.get('username'), password: form.get('password') })); state.user = data.user; await refreshProfile(); await refreshAlbums(); await studioTools.refreshQuota(); event.currentTarget.reset(); notice('欢迎回家 ♡'); } catch (e) { notice(e.message, true); } finally { b.disabled = false; } });
+  $('local-login').addEventListener('submit', async event => { event.preventDefault(); const formElement = event.currentTarget; const b = formElement.querySelector('button'); b.disabled = true; try { const form = new FormData(formElement); const data = await api('login', jsonOptions({ username: form.get('username'), password: form.get('password') })); state.user = data.user; await refreshProfile(); await refreshAlbums(); await studioTools.refreshQuota(); formElement.reset(); notice('欢迎回家 ♡'); } catch (e) { notice(e.message, true); } finally { b.disabled = false; } });
   $('logout').addEventListener('click', async () => { try { await api('logout', { method: 'POST' }); state.user = null; showMember(); notice('下次再来玩呀 ♡'); } catch (e) { notice(e.message, true); } });
   $('new-album').addEventListener('click', () => $('album-dialog').showModal());
   $('announcement-open').addEventListener('click', () => $('announcement-dialog').showModal());
