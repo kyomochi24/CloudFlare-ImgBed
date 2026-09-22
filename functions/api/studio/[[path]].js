@@ -29,6 +29,7 @@ const shortObjectKey = extension => `studio/${Array.from(crypto.getRandomValues(
 const monthKey = () => new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 7);
 const dayKey = () => new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
 const cutoutLimits = user => user.is_super ? { daily: 30, batch: 8 } : user.tier === 'pikachu' ? { daily: 30, batch: 4 } : { daily: 10, batch: 2 };
+const candyLimit = user => user.is_super ? null : user.tier === 'pikachu' ? 10 : 2;
 const sha = async text => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))).map(x => x.toString(16).padStart(2, '0')).join('');
 const cookie = (token, age = SESSION_SECONDS) => `studio_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`;
 const getCookie = (request, key) => request.headers.get('Cookie')?.split(';').map(s => s.trim()).find(s => s.startsWith(`${key}=`))?.slice(key.length + 1) || '';
@@ -196,7 +197,7 @@ function acceptedSource(raw, env) {
   let u;
   try { u = new URL(raw); } catch { throw new Error('图片链接无效'); }
   if (u.protocol !== 'https:' || (u.port && u.port !== '443') || !u.hostname.includes('.') || u.username || u.password || /^\d+\.\d+\.\d+\.\d+$/.test(u.hostname) || u.hostname.includes(':') || u.hostname.endsWith('.local')) throw new Error('仅支持公开的 HTTPS 图片链接');
-  const hosts = new Set(['iili.io', 'i.postimg.cc', 'img.baidu.re', ...plain(env.STUDIO_IMPORT_HOSTS).split(',').map(x => x.trim().toLowerCase()).filter(Boolean)]);
+  const hosts = new Set(['iili.io', 'i.postimg.cc', 'img.baidu.re', 'img.baibai.cv', '771553.xyz', 'qianqianqiu.date', ...plain(env.STUDIO_IMPORT_HOSTS).split(',').map(x => x.trim().toLowerCase()).filter(Boolean)]);
   if (!hosts.has(u.hostname.toLowerCase())) throw new Error(`暂不允许从 ${u.hostname} 导入，请联系管理员添加来源域名`);
   return u.toString();
 }
@@ -362,6 +363,37 @@ async function handleUser(context, db, user, route, method) {
     if (!result.meta?.changes) return fail('今天的抠图次数已经用完啦，明天北京时间 00:00 重置', 429);
     const row = await db.prepare('SELECT used FROM studio_cutout_usage WHERE user_id=? AND day_key=?').bind(user.id, day).first();
     return json({ dayKey: day, used: row.used, dailyLimit: daily, batchLimit: batch, remaining: daily - row.used });
+  }
+  if (route === 'candy/quota' && method === 'GET') {
+    const day = dayKey(), limit = candyLimit(user);
+    const row = await db.prepare('SELECT used FROM studio_candy_usage WHERE user_id=? AND day_key=?').bind(user.id, day).first();
+    return json({ dayKey: day, used: row?.used || 0, dailyLimit: limit, remaining: limit === null ? null : Math.max(0, limit - (row?.used || 0)) });
+  }
+  if (route === 'candy/claim' && method === 'POST') {
+    const { projectId } = await bodyJson(request);
+    if (typeof projectId !== 'string' || !/^[\da-f-]{36}$/i.test(projectId)) return fail('改色项目编号无效');
+    const day = dayKey(), limit = candyLimit(user);
+    const existing = await db.prepare('SELECT day_key FROM studio_candy_exports WHERE user_id=? AND project_id=?').bind(user.id, projectId).first();
+    if (existing) return json({ ok: true, alreadyClaimed: true });
+    const inserted = await db.prepare('INSERT OR IGNORE INTO studio_candy_exports(user_id,project_id,day_key) VALUES(?,?,?)').bind(user.id, projectId, day).run();
+    if (!inserted.meta?.changes) return json({ ok: true, alreadyClaimed: true });
+    try {
+      const charged = await db.prepare('INSERT INTO studio_candy_usage(user_id,day_key,used) VALUES(?,?,1) ON CONFLICT(user_id,day_key) DO UPDATE SET used=used+1 WHERE ? IS NULL OR used<?').bind(user.id, day, limit, limit).run();
+      if (!charged.meta?.changes) {
+        await db.prepare('DELETE FROM studio_candy_exports WHERE user_id=? AND project_id=?').bind(user.id, projectId).run();
+        return fail('今天的改色份数已用完，明天北京时间 00:00 重置', 429);
+      }
+      return json({ ok: true, used: true });
+    } catch (error) {
+      await db.prepare('DELETE FROM studio_candy_exports WHERE user_id=? AND project_id=?').bind(user.id, projectId).run();
+      throw error;
+    }
+  }
+  if (route === 'candy/source' && method === 'POST') {
+    const { url } = await bodyJson(request);
+    let image;
+    try { image = await fetchImage(plain(url), env); } catch (error) { return fail(error.message, 422); }
+    return new Response(image.bytes, { headers: { 'Content-Type': image.type, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
   }
   if (route === 'me' && method === 'GET') {
     if (user.tier === 'pikachu' && !user.is_super) await reconcileCreatorMonth(db, user.id);

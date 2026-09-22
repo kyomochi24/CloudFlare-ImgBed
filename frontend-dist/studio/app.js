@@ -1,5 +1,6 @@
 import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=20260922d';
-import { initStudioTools } from './tools.js?v=20260922i';
+import { initStudioTools } from './tools.js?v=20260922j';
+import { initCandy } from './candy.js?v=20260923a';
 
 (() => {
   'use strict';
@@ -88,6 +89,7 @@ import { initStudioTools } from './tools.js?v=20260922i';
   }
   async function refreshProfile() { const data = await api('me'); state.user = data.user; state.application = data.application; renderProfile(); showMember(); }
   const studioTools = initStudioTools({ api, state, refreshProfile, refreshAlbums, notice });
+  const candy = initCandy({ api, state, refreshProfile, refreshAlbums, notice });
   async function refreshAlbums() {
     const data = await api('albums'); state.albums = data.albums;
     if (!state.albums.some(a => a.id === state.albumId)) state.albumId = state.albums[0]?.id || '';
@@ -135,8 +137,9 @@ import { initStudioTools } from './tools.js?v=20260922i';
     const error = new URLSearchParams(location.search).get('error'); if (error === 'not_member') { notice('这个 Discord 账号尚未加入指定社区，暂时不能登录。', true); history.replaceState(null, '', '/studio/'); }
     try { await refreshProfile(); await refreshAlbums(); } catch { state.user = null; showMember(); }
     if (state.user) try { await studioTools.refreshQuota(); } catch (error) { $('cutout-quota').textContent = error.message; }
+    if (state.user) { try { await candy.refreshQuota(); } catch (error) { $('candy-quota').textContent = `改色功能尚未就绪：${error.message}，请先执行 D1 迁移`; } await candy.refreshDrafts(); }
   }
-  $('local-login').addEventListener('submit', async event => { event.preventDefault(); const formElement = event.currentTarget; const b = formElement.querySelector('button'); b.disabled = true; try { const form = new FormData(formElement); const data = await api('login', jsonOptions({ username: form.get('username'), password: form.get('password') })); state.user = data.user; await refreshProfile(); await refreshAlbums(); await studioTools.refreshQuota(); formElement.reset(); notice('欢迎回家 ♡'); } catch (e) { notice(e.message, true); } finally { b.disabled = false; } });
+  $('local-login').addEventListener('submit', async event => { event.preventDefault(); const formElement = event.currentTarget; const b = formElement.querySelector('button'); b.disabled = true; try { const form = new FormData(formElement); const data = await api('login', jsonOptions({ username: form.get('username'), password: form.get('password') })); state.user = data.user; await refreshProfile(); await refreshAlbums(); await studioTools.refreshQuota(); await candy.refreshQuota(); await candy.refreshDrafts(); formElement.reset(); notice('欢迎回家 ♡'); } catch (e) { notice(e.message, true); } finally { b.disabled = false; } });
   $('logout').addEventListener('click', async () => { try { await api('logout', { method: 'POST' }); state.user = null; showMember(); notice('下次再来玩呀 ♡'); } catch (e) { notice(e.message, true); } });
   $('new-album').addEventListener('click', () => $('album-dialog').showModal());
   $('announcement-open').addEventListener('click', () => $('announcement-dialog').showModal());

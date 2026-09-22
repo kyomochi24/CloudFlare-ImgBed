@@ -2,6 +2,10 @@ const $ = id => document.getElementById(id);
 const safe = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
 const fileStem = name => String(name || '图片').replace(/\.[^.]+$/, '').slice(0, 60);
 const blobUrl = blob => URL.createObjectURL(blob);
+const mobileCutout = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+  navigator.userAgentData?.mobile === true ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const mobileBg0Message = '这台手机的浏览器加载 BG0 大模型可能直接刷新页面。已为你保留轻巧快抠；BG0 请在电脑上使用。';
 
 export function initStudioTools({ api, state, refreshProfile, refreshAlbums, notice }) {
   const cutout = { files: [], results: [], quota: null, busy: false };
@@ -83,6 +87,12 @@ export function initStudioTools({ api, state, refreshProfile, refreshAlbums, not
   }
   $('cutout-input').addEventListener('change', event => { selectCutout([...event.target.files]); event.target.value = ''; });
   dropTarget($('cutout-drop'), selectCutout);
+  if (mobileCutout) {
+    const bg0Input = $('cutout-models').querySelector('input[value="bg0"]');
+    bg0Input.disabled = true;
+    bg0Input.closest('label').querySelector('small').textContent = '手机暂不可用：模型可能让网页因内存不足而刷新，请在电脑上使用';
+    $('cutout-status').textContent = '手机已自动使用轻巧快抠，避免 BG0 加载时网页崩溃。';
+  }
   $('cutout-models').addEventListener('change', event => {
     if (event.target.name !== 'cutout-model') return;
     $('cutout-status').textContent = event.target.value === 'bg0'
@@ -122,6 +132,7 @@ export function initStudioTools({ api, state, refreshProfile, refreshAlbums, not
     const engine = modelInputs.find(input => input.checked)?.value === 'bg0' ? 'bg0' : 'u2netp';
     modelInputs.forEach(input => { input.disabled = true; });
     try {
+      if (mobileCutout && engine === 'bg0') throw new Error(mobileBg0Message);
       const count = cutout.files.length;
       cutout.quota = await api('cutout/quota');
       if (count > cutout.quota.remaining) throw new Error(`今天还可以抠 ${cutout.quota.remaining} 张，请减少选择的图片`);
@@ -153,7 +164,7 @@ export function initStudioTools({ api, state, refreshProfile, refreshAlbums, not
       }
       $('cutout-status').textContent = `完成 ${cutout.results.length} / ${count} 张，今天还可抠 ${cutout.quota.remaining} 张。`;
     } catch (error) { $('cutout-status').textContent = error.message; notice(error.message, true); }
-    finally { cutout.busy = false; $('cutout-run').disabled = !cutout.files.length; modelInputs.forEach(input => { input.disabled = false; }); }
+    finally { cutout.busy = false; $('cutout-run').disabled = !cutout.files.length; modelInputs.forEach(input => { input.disabled = mobileCutout && input.value === 'bg0'; }); }
   });
 
   function clearSlices() {

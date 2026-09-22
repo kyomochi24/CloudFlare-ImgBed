@@ -7,6 +7,7 @@ import { onRequest } from '../functions/api/studio/[[path]].js';
 function environment() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec(readFileSync(new URL('../database/migrations/studio.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../database/migrations/studio-candy.sql', import.meta.url), 'utf8'));
   const kvData = new Map();
   const objects = new Map();
   const multipartUploads = new Map();
@@ -152,6 +153,49 @@ test('BG0 model is session-gated, allowlisted, and cached in R2', async () => {
     assert.match(await second.text(), /birefnet/);
     assert.equal(fetches, 1);
   } finally { globalThis.fetch = upstreamFetch; sqlite.close(); }
+});
+
+test('candy export quota counts each project once and resets by day', async () => {
+  const { env, sqlite } = environment();
+  assert.equal((await call(env, 'candy/quota')).response.status, 401);
+  const admin = 'admin_session=admin-test';
+  const created = await call(env, 'admin/users', 'POST', { username: 'candy_artist', password: 'very-long-password-123' }, admin);
+  const login = await call(env, 'login', 'POST', { username: 'candy_artist', password: 'very-long-password-123' });
+  const cookie = login.response.headers.get('Set-Cookie').split(';')[0];
+  assert.equal((await call(env, 'candy/quota', 'GET', null, cookie)).data.dailyLimit, 2);
+  const first = crypto.randomUUID(), second = crypto.randomUUID(), third = crypto.randomUUID();
+  assert.equal((await call(env, 'candy/claim', 'POST', { projectId: first }, cookie)).response.status, 200);
+  assert.equal((await call(env, 'candy/claim', 'POST', { projectId: first }, cookie)).data.alreadyClaimed, true);
+  assert.equal((await call(env, 'candy/claim', 'POST', { projectId: second }, cookie)).response.status, 200);
+  assert.equal((await call(env, 'candy/claim', 'POST', { projectId: third }, cookie)).response.status, 429);
+  assert.equal((await call(env, 'candy/quota', 'GET', null, cookie)).data.used, 2);
+  const upgrade = await call(env, `admin/users/${created.data.id}`, 'PATCH', { tier: 'pikachu' }, admin);
+  assert.equal(upgrade.response.status, 200);
+  assert.equal((await call(env, 'candy/quota', 'GET', null, cookie)).data.dailyLimit, 10);
+  assert.equal((await call(env, 'candy/claim', 'POST', { projectId: third }, cookie)).response.status, 200);
+  sqlite.close();
+});
+
+test('candy image preview requires a session and an approved image host', async () => {
+  const { env, sqlite } = environment();
+  assert.equal((await call(env, 'candy/source', 'POST', { url: 'https://iili.io/a.png' })).response.status, 401);
+  await call(env, 'admin/users', 'POST', { username: 'preview_user', password: 'very-long-password-123' }, 'admin_session=admin-test');
+  const login = await call(env, 'login', 'POST', { username: 'preview_user', password: 'very-long-password-123' });
+  const cookie = login.response.headers.get('Set-Cookie').split(';')[0];
+  const rejected = await call(env, 'candy/source', 'POST', { url: 'https://127.0.0.1/private.png' }, cookie);
+  assert.equal(rejected.response.status, 422);
+  assert.match(rejected.data.error, /HTTPS/);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async url => {
+    assert.equal(String(url), 'https://img.baibai.cv/f/example/test.png');
+    return new Response(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==', 'base64'));
+  };
+  try {
+    const allowed = await call(env, 'candy/source', 'POST', { url: 'https://img.baibai.cv/f/example/test.png' }, cookie);
+    assert.equal(allowed.response.status, 200);
+    assert.equal(allowed.response.headers.get('Content-Type'), 'image/png');
+  } finally { globalThis.fetch = originalFetch; }
+  sqlite.close();
 });
 
 test('only admin can grant unlimited tier; arbitrary file uses R2 multipart and remains accounted for', async () => {
