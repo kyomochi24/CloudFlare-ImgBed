@@ -83,12 +83,18 @@ export function initStudioTools({ api, state, refreshProfile, refreshAlbums, not
   }
   $('cutout-input').addEventListener('change', event => { selectCutout([...event.target.files]); event.target.value = ''; });
   dropTarget($('cutout-drop'), selectCutout);
+  $('cutout-models').addEventListener('change', event => {
+    if (event.target.name !== 'cutout-model') return;
+    $('cutout-status').textContent = event.target.value === 'bg0'
+      ? 'BG0 首次使用需要下载较大的模型，图片仍在你的设备上处理。'
+      : '轻巧快抠加载更快，适合手机和日常图片。';
+  });
   $('cutout-clear').addEventListener('click', () => { cutout.files = []; $('cutout-picked').replaceChildren(); $('cutout-run').disabled = true; clearCutoutResults(); });
   function renderCutoutResults() {
     const box = $('cutout-results'); box.replaceChildren();
     for (const [index, item] of cutout.results.entries()) {
       const card = document.createElement('article'); card.className = 'tool-result-card';
-      card.innerHTML = `<div class="tool-result-title">${safe(item.file.name)} <span class="cutout-output-tag">透明结果 · 保存的是这张</span></div><div class="compare-stage checker"><img class="compare-after" alt="透明抠图结果"><img class="compare-before" alt="原图"><span class="compare-label">透明 PNG 预览 ♡</span></div><label class="compare-control">拖动对比：左端是抠图结果，右端是原图<input type="range" min="0" max="100" value="0" aria-label="查看第 ${index + 1} 张图片的抠图前后对比"></label><div class="tool-result-actions"><a class="button secondary" download="${safe(fileStem(item.file.name))}-抠图.png">下载透明 PNG ↓</a><button class="button primary save-cutout" type="button">保存这张透明 PNG ♡</button></div><p class="tool-status" role="status"></p>`;
+      card.innerHTML = `<div class="tool-result-title">${safe(item.file.name)} <span class="cutout-output-tag">${item.engine === 'bg0' ? 'BG0' : '轻巧快抠'} · 透明 PNG</span></div><div class="compare-stage checker"><img class="compare-after" alt="透明抠图结果"><img class="compare-before" alt="原图"><span class="compare-label">透明 PNG 预览 ♡</span></div><label class="compare-control">拖动对比：左端是抠图结果，右端是原图<input type="range" min="0" max="100" value="0" aria-label="查看第 ${index + 1} 张图片的抠图前后对比"></label><div class="tool-result-actions"><a class="button secondary" download="${safe(fileStem(item.file.name))}-抠图.png">下载透明 PNG ↓</a><button class="button primary save-cutout" type="button">保存这张透明 PNG ♡</button></div><p class="tool-status" role="status"></p>`;
       card.querySelector('.compare-after').src = item.outputUrl;
       card.querySelector('.compare-before').src = item.originalUrl;
       card.querySelector('a').href = item.outputUrl;
@@ -112,25 +118,42 @@ export function initStudioTools({ api, state, refreshProfile, refreshAlbums, not
   $('cutout-run').addEventListener('click', async () => {
     if (cutout.busy || !cutout.files.length) return;
     cutout.busy = true; $('cutout-run').disabled = true; clearCutoutResults();
+    const modelInputs = [...$('cutout-models').querySelectorAll('input[name="cutout-model"]')];
+    const engine = modelInputs.find(input => input.checked)?.value === 'bg0' ? 'bg0' : 'u2netp';
+    modelInputs.forEach(input => { input.disabled = true; });
     try {
       const count = cutout.files.length;
-      $('cutout-status').textContent = '正在加载抠图模型，首次使用需要一点时间…';
-      const { removeBackground, prepareModel } = await import('./cutout-engine.js?v=20260922g');
-      await prepareModel();
-      cutout.quota = await api('cutout/claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count }) });
+      cutout.quota = await api('cutout/quota');
+      if (count > cutout.quota.remaining) throw new Error(`今天还可以抠 ${cutout.quota.remaining} 张，请减少选择的图片`);
+      $('cutout-status').textContent = engine === 'bg0' ? '正在准备 BG0，首次使用需要下载约 94–192 MB 模型…' : '正在加载轻巧快抠模型…';
+      const { removeBackground, prepareModel } = engine === 'bg0'
+        ? await import('./vendor/bg0/engine.js?v=20260922i')
+        : await import('./cutout-engine.js?v=20260922g');
+      if (prepareModel) await prepareModel();
+      if (engine === 'u2netp') cutout.quota = await api('cutout/claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count }) });
       renderQuota();
       for (let i = 0; i < count; i++) {
         const file = cutout.files[i];
-        $('cutout-status').textContent = `正在抠第 ${i + 1} / ${count} 张：${file.name}。首次使用需要加载模型，请稍等…`;
+        $('cutout-status').textContent = `正在用 ${engine === 'bg0' ? 'BG0' : '轻巧快抠'} 处理第 ${i + 1} / ${count} 张：${file.name}…`;
         try {
-          const blob = await removeBackground(file);
-          cutout.results.push({ file, blob, originalUrl: blobUrl(file), outputUrl: blobUrl(blob) });
+          const blob = engine === 'bg0'
+            ? await removeBackground(file, progress => {
+                const step = { preparing: '准备中', downloading: '下载模型', processing: '正在抠图', finishing: '生成透明 PNG' }[progress.stage] || '处理中';
+                const percent = Number.isFinite(progress.progress) ? ` ${Math.round(progress.progress * 100)}%` : '';
+                $('cutout-status').textContent = `第 ${i + 1} / ${count} 张 · BG0 ${step}${percent}：${file.name}`;
+              })
+            : await removeBackground(file);
+          if (engine === 'bg0') {
+            cutout.quota = await api('cutout/claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count: 1 }) });
+            renderQuota();
+          }
+          cutout.results.push({ file, blob, engine, originalUrl: blobUrl(file), outputUrl: blobUrl(blob) });
           renderCutoutResults();
         } catch (error) { notice(`${file.name} 抠图失败：${error.message}`, true); }
       }
-      $('cutout-status').textContent = `完成 ${cutout.results.length} / ${count} 张。每日次数按开始处理的张数计算。`;
+      $('cutout-status').textContent = `完成 ${cutout.results.length} / ${count} 张，今天还可抠 ${cutout.quota.remaining} 张。`;
     } catch (error) { $('cutout-status').textContent = error.message; notice(error.message, true); }
-    finally { cutout.busy = false; $('cutout-run').disabled = !cutout.files.length; }
+    finally { cutout.busy = false; $('cutout-run').disabled = !cutout.files.length; modelInputs.forEach(input => { input.disabled = false; }); }
   });
 
   function clearSlices() {

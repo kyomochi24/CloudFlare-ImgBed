@@ -1,0 +1,14 @@
+浅浅丘的甜品屋 · BG0 双模型抠图更新
+
+本压缩包包含 18 个需要合并进 kyomochi24/CloudFlare-ImgBed 的文件。
+请不要把整个 ZIP 上传到 GitHub 当作一个文件；先解压，再按原目录结构覆盖到仓库。
+
+如果使用 GitHub Desktop：
+1. 登录拥有该仓库权限的 kyomochi24 账号，并克隆 CloudFlare-ImgBed。
+2. 解压此 ZIP，把其中的文件夹和文件复制到克隆仓库的根目录，选择合并/覆盖同名文件。
+3. 在 GitHub Desktop 的 Changes 中确认改动，提交，然后推送。Cloudflare Pages 连接 main 时，会自动部署 main 的改动。
+4. 等 Cloudflare Pages 部署成功，刷新 https://771553.xyz/studio/。登录后在「丘丘智能抠图」选择「轻巧快抠」或「细节精修 · BG0」。
+
+这次不需要运行 D1 SQL 或填写新环境变量。请确认原来的 R2 绑定 img_r2 仍在。
+首次使用 BG0 会下载较大模型（约 94 MB，兼容模式约 192 MB）。
+完整说明见 STUDIO_SETUP.zh-CN.md 中的「BG0 双模型抠图更新」。

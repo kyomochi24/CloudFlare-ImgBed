@@ -79,6 +79,16 @@
 
 如果页面显示「服务暂时不可用，请检查 D1 迁移和绑定」，先确认 `studio-cutout.sql` 在正确的 D1 数据库执行，且 Pages 里的绑定名仍为 `img_d1`。如果点击「开始抠图」提示模型加载失败，检查 Cloudflare 本次部署的文件列表是否包含 `u2netp.onnx` 和 `ort-wasm-simd-threaded.wasm`，然后在浏览器强制刷新。中国大陆能否稳定直连仍取决于访问 `771553.xyz` 的网络环境；这个版本不请求 Jevet 的外部网站。
 
+## BG0 双模型抠图更新
+
+这次更新只需把本次改动提交到连接 Cloudflare Pages 的 GitHub 仓库，等待部署完成后刷新 `/studio/`。**不用运行新的 D1 SQL，也不用增加环境变量。**确认 Pages 项目仍绑定原来的 R2 存储桶，变量名为 `img_r2`。
+
+在「丘丘智能抠图」中选择「轻巧快抠」或「细节精修 · BG0」，再选择图片并开始抠图。两种模型共用当前身份组的每日次数和单次数量限制，结果都能对比、下载透明 PNG、保存进当前相册。轻巧快抠仍使用原有 U2-NetP。BG0 使用 `@bg0/browser` 0.1.1 的 BiRefNet lite 512 浏览器模型；首次使用下载约 94 MB 的 WebGPU 模型，兼容模式需要约 192 MB 的模型，若 WebGPU 失败后切换兼容模式，两份都可能下载。图片在访客设备上处理。
+
+BG0 模型文件通过已登录用户的 `/api/studio/bg0-model/` 接口下载。Cloudflare 首次从 Hugging Face 获取固定版本的模型，随后缓存进现有 R2 的 `studio-models/bg0/` 目录。访客只请求本站域名。首次下载可能较慢；中国大陆访问本站和模型的实际速度仍应在当地网络测试。缓存模型约占 R2 0.1–0.3 GB，用户浏览器也会缓存模型；这部分不计入用户相册额度。站点静态文件中的 BG0 WASM 约 21.6 MB，上传 GitHub 时请保留 `frontend-dist/studio/vendor/bg0/` 文件夹。
+
+如果点击 BG0 后显示「模型暂时无法下载」，请检查 Cloudflare Pages 的 `img_r2` 绑定、R2 费用状态以及 Pages Functions 日志；已经成功缓存到 R2 的模型可以继续使用。BG0 脚本的固定版本、构建方法和许可说明见 [`frontend-dist/studio/vendor/bg0/NOTICE.md`](frontend-dist/studio/vendor/bg0/NOTICE.md)。
+
 ## 使用边界
 
 - 旧版共用用户口令和旧版用户会话已不能调用上传接口，这样不能绕过个人额度。原管理员会话及管理员 API Token 仍可使用旧接口。

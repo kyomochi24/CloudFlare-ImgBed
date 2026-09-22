@@ -16,6 +16,9 @@ const EXTENSIONS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'web
 const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
 const ANNOUNCEMENT_KEY = 'manage@studio@announcement';
 const ANNOUNCEMENT_IMAGE_LIMIT = 5 * 1024 * 1024;
+const BG0_MODEL_REVISION = '4a3c40c36c94093cc1e724d9ea428b8fa4b57dc7';
+const BG0_MODEL_PREFIX = `bg0-model/studioludens/birefnet-lite-512/resolve/${BG0_MODEL_REVISION}/`;
+const BG0_MODEL_FILES = new Set(['config.json', 'preprocessor_config.json', 'onnx/model.onnx', 'onnx/model_fp16.onnx']);
 
 const json = (data, status = 200, extra = {}) => new Response(JSON.stringify(data), {
   status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...extra }
@@ -322,6 +325,27 @@ async function multipart(context, db, user, route, method) {
 }
 async function handleUser(context, db, user, route, method) {
   const { request, env } = context;
+  if (route.startsWith('bg0-model/')) {
+    if (method !== 'GET') return fail('请求方法无效', 405);
+    const file = route.startsWith(BG0_MODEL_PREFIX) ? route.slice(BG0_MODEL_PREFIX.length) : '';
+    if (!BG0_MODEL_FILES.has(file)) return fail('模型文件不存在', 404);
+    if (!env.img_r2?.get || !env.img_r2?.put) return fail('R2 存储桶未绑定 img_r2', 503);
+    const key = `studio-models/bg0/${BG0_MODEL_REVISION}/${file}`;
+    const contentType = file.endsWith('.json') ? 'application/json' : 'application/octet-stream';
+    const headers = { 'Content-Type': contentType, 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff' };
+    const cached = await env.img_r2.get(key);
+    if (cached) {
+      headers['Content-Length'] = String(cached.size);
+      return new Response(cached.body, { headers });
+    }
+    const upstream = await fetch(`https://huggingface.co/studioludens/birefnet-lite-512/resolve/${BG0_MODEL_REVISION}/${file}`, { headers: { 'Accept-Encoding': 'identity' } });
+    if (!upstream.ok || !upstream.body) return fail('BG0 模型暂时无法下载，请稍后重试', 502);
+    const [browserStream, storageStream] = upstream.body.tee();
+    context.waitUntil(env.img_r2.put(key, storageStream, { httpMetadata: { contentType } }).catch(error => console.error('BG0 R2 model cache failed', error)));
+    const length = upstream.headers.get('Content-Length');
+    if (length) headers['Content-Length'] = length;
+    return new Response(browserStream, { headers });
+  }
   if (route === 'cutout/quota' && method === 'GET') {
     const day = dayKey();
     const { daily, batch } = cutoutLimits(user);

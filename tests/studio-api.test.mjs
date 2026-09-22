@@ -119,6 +119,41 @@ test('Discord login only admits members of a configured guild', async () => {
   } finally { globalThis.fetch = previousFetch; sqlite.close(); }
 });
 
+test('BG0 model is session-gated, allowlisted, and cached in R2', async () => {
+  const { env, sqlite, objects } = environment();
+  const revision = '4a3c40c36c94093cc1e724d9ea428b8fa4b57dc7';
+  const path = `bg0-model/studioludens/birefnet-lite-512/resolve/${revision}/config.json`;
+  const noSession = await call(env, path);
+  assert.equal(noSession.response.status, 401);
+  await call(env, 'admin/users', 'POST', { username: 'model_user', password: 'very-long-password-123' }, 'admin_session=admin-test');
+  const login = await call(env, 'login', 'POST', { username: 'model_user', password: 'very-long-password-123' });
+  const cookie = login.response.headers.get('Set-Cookie').split(';')[0];
+  assert.equal((await call(env, `${path}/unexpected`, 'GET', null, cookie)).response.status, 404);
+
+  env.img_r2.get = async key => objects.has(key) ? { body: new Blob([objects.get(key)]).stream(), size: objects.get(key).byteLength } : null;
+  env.img_r2.put = async (key, stream) => { objects.set(key, new Uint8Array(await new Response(stream).arrayBuffer())); };
+  const upstreamFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = async url => {
+    fetches++;
+    assert.equal(String(url), `https://huggingface.co/studioludens/birefnet-lite-512/resolve/${revision}/config.json`);
+    return new Response('{"model_type":"birefnet"}', { headers: { 'Content-Length': '25' } });
+  };
+  try {
+    const request = new Request(`https://example.test/api/studio/${path}`, { headers: { Cookie: cookie } });
+    const cacheTasks = [];
+    const context = { env, request, waitUntil(promise) { cacheTasks.push(promise); } };
+    const first = await onRequest(context);
+    assert.equal(first.status, 200);
+    assert.match(await first.text(), /birefnet/);
+    await Promise.all(cacheTasks);
+    const second = await onRequest(context);
+    assert.equal(second.status, 200);
+    assert.match(await second.text(), /birefnet/);
+    assert.equal(fetches, 1);
+  } finally { globalThis.fetch = upstreamFetch; sqlite.close(); }
+});
+
 test('only admin can grant unlimited tier; arbitrary file uses R2 multipart and remains accounted for', async () => {
   const { env, sqlite, objects, kvData } = environment();
   const adminCookie = 'admin_session=admin-test';

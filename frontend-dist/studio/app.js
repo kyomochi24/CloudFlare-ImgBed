@@ -1,5 +1,5 @@
 import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=20260922d';
-import { initStudioTools } from './tools.js?v=20260922h';
+import { initStudioTools } from './tools.js?v=20260922i';
 
 (() => {
   'use strict';
