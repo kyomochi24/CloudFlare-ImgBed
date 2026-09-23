@@ -170,6 +170,14 @@ async function login(db, request) {
   await db.prepare('DELETE FROM studio_login_attempts WHERE key=?').bind(key).run();
   return sessionResponse(db, user);
 }
+async function sourceRateLimited(db, userId) {
+  const key = await sha(`studio-source:${userId}`), now = Date.now(), windowMs = 10 * 60 * 1000, limit = 120;
+  const attempt = await db.prepare('SELECT window_start,attempts FROM studio_login_attempts WHERE key=?').bind(key).first();
+  if (attempt && now - attempt.window_start < windowMs && attempt.attempts >= limit) return true;
+  await db.prepare('INSERT INTO studio_login_attempts(key,window_start,attempts) VALUES(?,?,1) ON CONFLICT(key) DO UPDATE SET window_start=CASE WHEN ?-window_start>=? THEN ? ELSE window_start END,attempts=CASE WHEN ?-window_start>=? THEN 1 ELSE attempts+1 END')
+    .bind(key, now, now, windowMs, now, now, windowMs).run();
+  return false;
+}
 async function reconcileCreatorMonth(db, id) {
   const month = monthKey();
   // A previous approval reset month_uploaded_bytes to zero. Restore at least the
@@ -193,19 +201,23 @@ async function reserve(db, user, size) {
 async function refund(db, id, size) {
   await db.prepare('UPDATE studio_users SET stored_bytes=max(0,stored_bytes-?),month_uploaded_bytes=max(0,month_uploaded_bytes-?) WHERE id=?').bind(size, size, id).run();
 }
-function acceptedSource(raw, env) {
+function acceptedSource(raw) {
   let u;
   try { u = new URL(raw); } catch { throw new Error('图片链接无效'); }
-  if (u.protocol !== 'https:' || (u.port && u.port !== '443') || !u.hostname.includes('.') || u.username || u.password || /^\d+\.\d+\.\d+\.\d+$/.test(u.hostname) || u.hostname.includes(':') || u.hostname.endsWith('.local')) throw new Error('仅支持公开的 HTTPS 图片链接');
-  const hosts = new Set(['iili.io', 'i.postimg.cc', 'img.baidu.re', 'img.baibai.cv', '771553.xyz', 'qianqianqiu.date', ...plain(env.STUDIO_IMPORT_HOSTS).split(',').map(x => x.trim().toLowerCase()).filter(Boolean)]);
-  if (!hosts.has(u.hostname.toLowerCase())) throw new Error(`暂不允许从 ${u.hostname} 导入，请联系管理员添加来源域名`);
+  const hostname = u.hostname.toLowerCase().replace(/\.$/, '');
+  const reserved = ['localhost', '.localhost', '.local', '.internal', '.home', '.lan', '.test', '.invalid', '.example', '.onion'];
+  if (u.protocol !== 'https:' || (u.port && u.port !== '443') || !hostname.includes('.') || u.username || u.password || /^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.includes(':') || reserved.some(name => hostname === name || hostname.endsWith(name))) throw new Error('仅支持公开域名上的 HTTPS 图片链接');
   return u.toString();
 }
-async function fetchImage(raw, env) {
-  let url = acceptedSource(raw, env);
+async function fetchImage(raw) {
+  let url = acceptedSource(raw);
   for (let i = 0; i < 4; i++) {
     const res = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(20000), headers: { Accept: 'image/*' } });
-    if ([301, 302, 303, 307, 308].includes(res.status)) { url = acceptedSource(new URL(res.headers.get('Location'), url).toString(), env); continue; }
+    if ([301, 302, 303, 307, 308].includes(res.status)) {
+      const location = res.headers.get('Location');
+      if (!location) throw new Error('源站返回了无效的重定向');
+      url = acceptedSource(new URL(location, url).toString()); continue;
+    }
     if (res.status === 403) throw new Error('图片源站拒绝服务器读取（403）；请先把图片下载到电脑，再上传到相册');
     if (!res.ok) throw new Error(`源站返回 ${res.status}`);
     const sizeHint = Number(res.headers.get('Content-Length') || 0);
@@ -390,9 +402,10 @@ async function handleUser(context, db, user, route, method) {
     }
   }
   if (route === 'candy/source' && method === 'POST') {
+    if (await sourceRateLimited(db, user.id)) return fail('图片读取太频繁，请十分钟后再试', 429);
     const { url } = await bodyJson(request);
     let image;
-    try { image = await fetchImage(plain(url), env); } catch (error) { return fail(error.message, 422); }
+    try { image = await fetchImage(plain(url)); } catch (error) { return fail(error.message, 422); }
     return new Response(image.bytes, { headers: { 'Content-Type': image.type, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
   }
   if (route === 'me' && method === 'GET') {
@@ -455,10 +468,11 @@ async function handleUser(context, db, user, route, method) {
   }
   if (route.startsWith('multipart/')) return multipart(context, db, user, route, method);
   if (route === 'import-image' && method === 'POST') {
+    if (await sourceRateLimited(db, user.id)) return fail('图片搬运太频繁，请十分钟后再试', 429);
     const data = await bodyJson(request);
     const sourceUrl = plain(data.url);
     let file;
-    try { file = await fetchImage(sourceUrl, env); } catch (e) { return fail(e.message, 422); }
+    try { file = await fetchImage(sourceUrl); } catch (e) { return fail(e.message, 422); }
     const name = cleanName(new URL(sourceUrl).pathname.split('/').pop()) || 'imported-image';
     return saveImage(context, db, user, String(data.albumId || ''), { ...file, name });
   }
