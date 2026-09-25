@@ -433,10 +433,28 @@ async function handleUser(context, db, user, route, method) {
     const id = route.split('/')[1];
     const album = await db.prepare('SELECT id FROM studio_albums WHERE id=? AND user_id=?').bind(id, user.id).first();
     if (!album) return fail('相册不存在', 404);
-    const count = await db.prepare('SELECT count(*) n FROM studio_files WHERE album_id=?').bind(id).first();
-    if (count.n) return fail('请先清空相册', 409);
-    await db.prepare('DELETE FROM studio_albums WHERE id=? AND user_id=?').bind(id, user.id).run();
-    return json({ ok: true });
+    // Bound each request so large albums can be removed over several requests.
+    // Keep the album until every object and pending upload is cleaned up.
+    const uploads = await db.prepare('SELECT id,object_key,r2_upload_id FROM studio_uploads WHERE album_id=? AND user_id=? LIMIT 1').bind(id, user.id).all();
+    for (const upload of uploads.results || []) {
+      await env.img_r2.resumeMultipartUpload(upload.object_key, upload.r2_upload_id).abort();
+      await db.prepare('DELETE FROM studio_upload_parts WHERE upload_id=?').bind(upload.id).run();
+      await db.prepare('DELETE FROM studio_uploads WHERE id=? AND user_id=?').bind(upload.id, user.id).run();
+    }
+    const files = await db.prepare('SELECT id,size_bytes FROM studio_files WHERE album_id=? AND user_id=? LIMIT 6').bind(id, user.id).all();
+    for (const file of files.results || []) {
+      await env.img_r2.delete(file.id);
+      await getDatabase(env).delete(file.id);
+      const removed = await db.prepare('DELETE FROM studio_files WHERE id=? AND album_id=? AND user_id=?').bind(file.id, id, user.id).run();
+      if (removed.meta?.changes) {
+        await db.prepare('UPDATE studio_users SET stored_bytes=max(0,stored_bytes-?) WHERE id=?').bind(file.size_bytes, user.id).run();
+        context.waitUntil(removeFileFromIndex(context, file.id));
+      }
+    }
+    const remaining = await db.prepare('SELECT (SELECT count(*) FROM studio_files WHERE album_id=? AND user_id=?) + (SELECT count(*) FROM studio_uploads WHERE album_id=? AND user_id=?) n').bind(id, user.id, id, user.id).first();
+    if (remaining.n) return json({ ok: true, done: false, remaining: remaining.n });
+    const deleted = await db.prepare('DELETE FROM studio_albums WHERE id=? AND user_id=? AND NOT EXISTS (SELECT 1 FROM studio_files WHERE album_id=?) AND NOT EXISTS (SELECT 1 FROM studio_uploads WHERE album_id=?)').bind(id, user.id, id, id).run();
+    return json({ ok: true, done: !!deleted.meta?.changes, remaining: 0 });
   }
   if (route === 'files' && method === 'GET') {
     const params = new URL(request.url).searchParams;
@@ -628,7 +646,7 @@ export async function onRequest(context) {
     if (route.startsWith('admin/')) return handleAdmin(context, db, route, method);
     const user = await currentUser(db, request);
     if (!user) return fail('请先登录', 401);
-    return handleUser(context, db, user, route, method);
+    return await handleUser(context, db, user, route, method);
   } catch (error) {
     console.error('Studio API error', error);
     if (error instanceof SyntaxError) return fail('请求格式错误');

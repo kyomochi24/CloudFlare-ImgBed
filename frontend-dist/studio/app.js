@@ -5,7 +5,7 @@ import { initCandy } from './candy.js?v=20260923b';
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = { user: null, albums: [], albumId: '', files: [], hasMore: false, selectedFiles: new Set(), uploading: false, importing: false, rawJson: '', jsonName: '', themeTitle: '', importAlbumId: '', links: [], replacements: new Map(), application: null };
+  const state = { user: null, albums: [], albumId: '', selectedAlbums: new Set(), deletingAlbums: false, files: [], hasMore: false, selectedFiles: new Set(), uploading: false, importing: false, rawJson: '', jsonName: '', themeTitle: '', importAlbumId: '', links: [], replacements: new Map(), application: null };
   const fmt = n => n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1024).toFixed(1)} KB`;
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
   const progress = document.createElement('div');
@@ -71,7 +71,11 @@ import { initCandy } from './candy.js?v=20260923b';
     if (u.discordId) $('application-form').elements.discordId.value = u.discordId;
   }
   function renderAlbums() {
-    $('album-list').innerHTML = state.albums.map(a => `<button class="album-item ${a.id === state.albumId ? 'active' : ''}" data-id="${escapeHtml(a.id)}">✿ ${escapeHtml(a.name)} <small>${a.file_count}</small></button>`).join('');
+    $('album-list').innerHTML = state.albums.map(a => `<div class="album-row ${a.id === state.albumId ? 'active' : ''}"><label class="album-check" title="选择相册：${escapeHtml(a.name)}"><input type="checkbox" data-album-check="${escapeHtml(a.id)}" aria-label="选择相册：${escapeHtml(a.name)}" ${state.selectedAlbums.has(a.id) ? 'checked' : ''} ${state.deletingAlbums ? 'disabled' : ''}></label><button type="button" class="album-item ${a.id === state.albumId ? 'active' : ''}" data-id="${escapeHtml(a.id)}">✿ <span class="album-name">${escapeHtml(a.name)}</span><small>${a.file_count}</small></button></div>`).join('');
+    $('album-selection-count').textContent = `已选择 ${state.selectedAlbums.size} 个`;
+    $('select-all-albums').disabled = state.deletingAlbums || !state.albums.length || state.selectedAlbums.size === state.albums.length;
+    $('clear-selected-albums').disabled = state.deletingAlbums || !state.selectedAlbums.size;
+    $('delete-selected-albums').disabled = state.deletingAlbums || !state.selectedAlbums.size;
     $('current-album-name').textContent = state.albums.find(a => a.id === state.albumId)?.name || '我的相册';
     const target = $('move-target');
     const previous = target.value;
@@ -92,6 +96,7 @@ import { initCandy } from './candy.js?v=20260923b';
   const candy = initCandy({ api, state, refreshProfile, refreshAlbums, notice });
   async function refreshAlbums() {
     const data = await api('albums'); state.albums = data.albums;
+    state.selectedAlbums = new Set([...state.selectedAlbums].filter(id => state.albums.some(album => album.id === id)));
     if (!state.albums.some(a => a.id === state.albumId)) state.albumId = state.albums[0]?.id || '';
     renderAlbums(); await refreshFiles();
   }
@@ -146,7 +151,39 @@ import { initCandy } from './candy.js?v=20260923b';
   $('announcement-close').addEventListener('click', () => $('announcement-dialog').close());
   $('announcement-done').addEventListener('click', () => $('announcement-dialog').close());
   $('album-form').addEventListener('submit', async event => { if (event.submitter?.value !== 'create') return; event.preventDefault(); try { const data = await api('albums', jsonOptions({ name: $('album-name').value })); $('album-dialog').close(); $('album-name').value = ''; state.albumId = data.id; await refreshAlbums(); notice('新相册已经摆好啦 ✿'); } catch (e) { notice(e.message, true); } });
-  $('album-list').addEventListener('click', async event => { const button = event.target.closest('[data-id]'); if (!button) return; state.albumId = button.dataset.id; renderAlbums(); await refreshFiles(); });
+  $('album-list').addEventListener('change', event => { const check = event.target.closest('[data-album-check]'); if (!check || state.deletingAlbums) return; if (check.checked) state.selectedAlbums.add(check.dataset.albumCheck); else state.selectedAlbums.delete(check.dataset.albumCheck); renderAlbums(); });
+  $('album-list').addEventListener('click', async event => { const button = event.target.closest('[data-id]'); if (!button || state.deletingAlbums) return; state.albumId = button.dataset.id; renderAlbums(); try { await refreshFiles(); } catch (e) { notice(e.message, true); } });
+  $('select-all-albums').addEventListener('click', () => { state.albums.forEach(album => state.selectedAlbums.add(album.id)); renderAlbums(); });
+  $('clear-selected-albums').addEventListener('click', () => { state.selectedAlbums.clear(); renderAlbums(); });
+  $('delete-selected-albums').addEventListener('click', async () => {
+    const selected = state.albums.filter(album => state.selectedAlbums.has(album.id));
+    if (!selected.length || state.deletingAlbums || state.uploading || state.importing) { if (state.uploading || state.importing) notice('请等当前上传或搬运完成后再删除相册', true); return; }
+    const totalFiles = selected.reduce((sum, album) => sum + Number(album.file_count || 0), 0);
+    const names = selected.length <= 3 ? selected.map(album => `「${album.name}」`).join('、') : `所选的 ${selected.length} 个相册`;
+    if (!confirm(`确定删除${names}吗？\n\n相册内约 ${totalFiles} 个文件也会永久删除，原有图链将失效，无法恢复。`)) return;
+    state.deletingAlbums = true;
+    renderAlbums();
+    let done = 0;
+    const failures = [];
+    try {
+      for (const album of selected) {
+        $('album-delete-status').textContent = `正在删除 ${done + 1} / ${selected.length}：${album.name}…`;
+        try {
+          let result;
+          do {
+            result = await api(`albums/${encodeURIComponent(album.id)}`, { method: 'DELETE' });
+            if (!result.done) $('album-delete-status').textContent = `正在清理「${album.name}」：还剩 ${result.remaining} 个文件或上传任务…`;
+          } while (!result.done);
+          state.selectedAlbums.delete(album.id);
+          done++;
+        } catch (error) { failures.push(`「${album.name}」：${error.message}`); }
+      }
+    } finally {
+      state.deletingAlbums = false;
+      try { await Promise.all([refreshAlbums(), refreshProfile()]); } catch (error) { failures.push(`刷新失败：${error.message}`); renderAlbums(); }
+      $('album-delete-status').textContent = `已删除 ${done} / ${selected.length} 个相册${failures.length ? `；${failures[0]}，可以再次勾选重试` : ' ♡'}`;
+    }
+  });
   $('more-files').addEventListener('click', async () => { try { await refreshFiles(true); } catch (e) { notice(e.message, true); } });
   function uploadRequest(path, method, body, onProgress) {
     return new Promise((resolve, reject) => {

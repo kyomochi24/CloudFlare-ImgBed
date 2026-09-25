@@ -120,6 +120,69 @@ test('Discord login only admits members of a configured guild', async () => {
   } finally { globalThis.fetch = previousFetch; sqlite.close(); }
 });
 
+test('album deletion clears all batches, objects, metadata, and stored bytes for its owner', async () => {
+  const { env, sqlite, kvData, objects, multipartUploads } = environment();
+  const admin = 'admin_session=admin-test';
+  await call(env, 'admin/users', 'POST', { username: 'album_owner', password: 'very-long-password-123' }, admin);
+  await call(env, 'admin/users', 'POST', { username: 'album_neighbor', password: 'very-long-password-123' }, admin);
+  const owner = await call(env, 'login', 'POST', { username: 'album_owner', password: 'very-long-password-123' });
+  const neighbor = await call(env, 'login', 'POST', { username: 'album_neighbor', password: 'very-long-password-123' });
+  const ownerCookie = owner.response.headers.get('Set-Cookie').split(';')[0];
+  const neighborCookie = neighbor.response.headers.get('Set-Cookie').split(';')[0];
+  const albumId = (await call(env, 'albums', 'GET', null, ownerCookie)).data.albums[0].id;
+  const ownerId = sqlite.prepare("SELECT id FROM studio_users WHERE username='album_owner'").get().id;
+  const neighborId = sqlite.prepare("SELECT id FROM studio_users WHERE username='album_neighbor'").get().id;
+  assert.equal((await call(env, `albums/${albumId}`, 'DELETE', null, neighborCookie)).response.status, 404);
+  for (let index = 0; index < 31; index++) {
+    const key = `studio/album-test-${index}.png`;
+    sqlite.prepare('INSERT INTO studio_files(id,user_id,album_id,file_name,mime_type,size_bytes) VALUES(?,?,?,?,?,?)').run(key, ownerId, albumId, `${index}.png`, 'image/png', 10);
+    objects.set(key, Buffer.from('image'));
+    kvData.set(key, { value: '', metadata: { OwnerId: ownerId } });
+  }
+  sqlite.prepare('UPDATE studio_users SET stored_bytes=310 WHERE id=?').run(ownerId);
+  sqlite.prepare('INSERT INTO studio_uploads(id,user_id,album_id,object_key,r2_upload_id,file_name,mime_type,size_bytes,part_size,part_count) VALUES(?,?,?,?,?,?,?,?,?,?)').run('pending-id', ownerId, albumId, 'studio/pending.png', 'pending-r2-id', 'pending.png', 'image/png', 10, 10, 1);
+  sqlite.prepare('INSERT INTO studio_upload_parts(upload_id,part_number,etag) VALUES(?,?,?)').run('pending-id', 1, 'etag');
+  multipartUploads.set('pending-r2-id', { key: 'studio/pending.png', parts: new Map() });
+  const first = await call(env, `albums/${albumId}`, 'DELETE', null, ownerCookie);
+  assert.equal(first.data.done, false);
+  assert.equal(first.data.remaining, 25);
+  assert.equal(multipartUploads.size, 0);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM studio_uploads WHERE album_id=?').get(albumId).n, 0);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM studio_upload_parts').get().n, 0);
+  assert.equal((await call(env, 'albums', 'GET', null, ownerCookie)).data.albums[0].file_count, 25);
+  let result = first;
+  for (let attempt = 0; attempt < 6 && !result.data.done; attempt++) result = await call(env, `albums/${albumId}`, 'DELETE', null, ownerCookie);
+  assert.equal(result.data.done, true);
+  assert.equal((await call(env, 'albums', 'GET', null, ownerCookie)).data.albums.length, 0);
+  assert.equal((await call(env, 'albums', 'GET', null, neighborCookie)).data.albums.length, 1);
+  assert.equal(sqlite.prepare('SELECT stored_bytes FROM studio_users WHERE id=?').get(ownerId).stored_bytes, 0);
+  assert.equal(sqlite.prepare('SELECT stored_bytes FROM studio_users WHERE id=?').get(neighborId).stored_bytes, 0);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM studio_files WHERE album_id=?').get(albumId).n, 0);
+  assert.equal(objects.size, 0);
+  assert.equal([...kvData.keys()].filter(key => key.startsWith('studio/album-test-')).length, 0);
+  sqlite.close();
+});
+
+test('album deletion leaves the album and remaining files available after storage failure', async () => {
+  const { env, sqlite, objects } = environment();
+  await call(env, 'admin/users', 'POST', { username: 'album_retry', password: 'very-long-password-123' }, 'admin_session=admin-test');
+  const login = await call(env, 'login', 'POST', { username: 'album_retry', password: 'very-long-password-123' });
+  const cookie = login.response.headers.get('Set-Cookie').split(';')[0];
+  const id = (await call(env, 'albums', 'GET', null, cookie)).data.albums[0].id;
+  const owner = sqlite.prepare("SELECT id FROM studio_users WHERE username='album_retry'").get().id;
+  sqlite.prepare('INSERT INTO studio_files(id,user_id,album_id,file_name,mime_type,size_bytes) VALUES(?,?,?,?,?,?)').run('studio/retry.png', owner, id, 'retry.png', 'image/png', 10);
+  sqlite.prepare('UPDATE studio_users SET stored_bytes=10 WHERE id=?').run(owner);
+  objects.set('studio/retry.png', Buffer.from('image'));
+  const originalDelete = env.img_r2.delete;
+  env.img_r2.delete = async () => { throw new Error('storage temporarily unavailable'); };
+  assert.equal((await call(env, `albums/${id}`, 'DELETE', null, cookie)).response.status, 503);
+  assert.equal((await call(env, 'albums', 'GET', null, cookie)).data.albums[0].file_count, 1);
+  assert.equal(sqlite.prepare('SELECT stored_bytes FROM studio_users WHERE id=?').get(owner).stored_bytes, 10);
+  env.img_r2.delete = originalDelete;
+  assert.equal((await call(env, `albums/${id}`, 'DELETE', null, cookie)).data.done, true);
+  sqlite.close();
+});
+
 test('BG0 model is session-gated, allowlisted, and cached in R2', async () => {
   const { env, sqlite, objects } = environment();
   const revision = '4a3c40c36c94093cc1e724d9ea428b8fa4b57dc7';
