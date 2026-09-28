@@ -1,7 +1,7 @@
 import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=20260922d';
 import { initStudioTools } from './tools.js?v=20260922j';
 import { initCandy } from './candy.js?v=20260923b';
-import { initFontTool } from './font-tool.js?v=20260928-font1';
+import { initFontTool } from './font-tool.js?v=20260928-font3';
 
 (() => {
   'use strict';

@@ -171,14 +171,14 @@ async function login(db, request) {
   await db.prepare('DELETE FROM studio_login_attempts WHERE key=?').bind(key).run();
   return sessionResponse(db, user);
 }
-function actualFontType(bytes) {
+function actualFontType(bytes, expectedLength = bytes.length) {
   if (bytes.length < 12) return null;
   const tag = (start) => String.fromCharCode(...bytes.slice(start, start + 4));
   const validFlavor = offset => tag(offset) === 'OTTO' || tag(offset) === 'true' || [0, 1, 0, 0].every((byte, i) => bytes[offset + i] === byte);
   const uint16 = offset => (bytes[offset] << 8) | bytes[offset + 1];
   const uint32 = offset => ((bytes[offset] * 0x1000000) + (bytes[offset + 1] << 16) + (bytes[offset + 2] << 8) + bytes[offset + 3]) >>> 0;
   if (validFlavor(0) && uint16(4) > 0 && 12 + uint16(4) * 16 <= bytes.length) return tag(0) === 'OTTO' ? 'font/otf' : 'font/ttf';
-  if ((tag(0) === 'wOFF' || tag(0) === 'wOF2') && bytes.length >= 48 && validFlavor(4) && uint32(8) === bytes.length && uint16(12) > 0) {
+  if ((tag(0) === 'wOFF' || tag(0) === 'wOF2') && bytes.length >= 48 && validFlavor(4) && uint32(8) === expectedLength && uint16(12) > 0) {
     return tag(0) === 'wOFF' ? 'font/woff' : 'font/woff2';
   }
   return null;
@@ -284,7 +284,6 @@ function studioMetadata(request, user, album, name, type, size) {
 }
 async function multipart(context, db, user, route, method) {
   const { request, env } = context;
-  if (!user.is_super) return fail('只有超级无敌美化大师丘可以上传任意文件', 403);
   if (!env.img_r2?.createMultipartUpload) return fail('R2 存储桶未绑定为 img_r2', 503);
   if (route === 'multipart/start' && method === 'POST') {
     const data = await bodyJson(request);
@@ -294,6 +293,7 @@ async function multipart(context, db, user, route, method) {
     const album = await db.prepare('SELECT id FROM studio_albums WHERE id=? AND user_id=?').bind(String(data.albumId || ''), user.id).first();
     if (!album) return fail('相册不存在', 404);
     if (!name || !Number.isSafeInteger(size) || size < 1 || !/^[\w.+-]+\/[\w.+-]+$/.test(type)) return fail('文件信息无效');
+    if (!user.is_super && (!FONT_TYPES[type] || !name.toLowerCase().endsWith(`.${FONT_TYPES[type]}`))) return fail('普通账号仅可分片上传 TTF、OTF、WOFF、WOFF2 字体', 403);
     const partSize = Math.max(MIN_PART_SIZE, Math.ceil(size / MAX_PARTS / 1048576) * 1048576);
     if (partSize > MAX_PART_SIZE) return fail('文件超过当前 Cloudflare 请求与 R2 分片可处理的大小', 413);
     const extension = (name.match(/\.([a-z0-9]{1,10})$/i)?.[1] || 'bin').toLowerCase();
@@ -309,6 +309,7 @@ async function multipart(context, db, user, route, method) {
   if (!match) return fail('接口不存在', 404);
   const row = await db.prepare('SELECT * FROM studio_uploads WHERE id=? AND user_id=?').bind(match[1], user.id).first();
   if (!row) return fail('上传任务不存在，请重新选择文件', 404);
+  if (!user.is_super && (!FONT_TYPES[row.mime_type] || !row.file_name.toLowerCase().endsWith(`.${FONT_TYPES[row.mime_type]}`))) return fail('普通账号仅可分片上传字体', 403);
   const upload = env.img_r2.resumeMultipartUpload(row.object_key, row.r2_upload_id);
   if (match[2].startsWith('parts/') && method === 'PUT') {
     const number = Number(match[3]);
@@ -318,6 +319,7 @@ async function multipart(context, db, user, route, method) {
     if (hinted && hinted !== expected) return fail('分片大小错误', 413);
     const bytes = await request.arrayBuffer();
     if (bytes.byteLength !== expected || bytes.byteLength > MAX_PART_SIZE) return fail('分片大小错误', 413);
+    if (!user.is_super && number === 1 && actualFontType(new Uint8Array(bytes), row.size_bytes) !== row.mime_type) return fail('字体文件格式与文件名不符', 400);
     const part = await upload.uploadPart(number, bytes);
     await db.prepare('INSERT INTO studio_upload_parts(upload_id,part_number,etag) VALUES(?,?,?) ON CONFLICT(upload_id,part_number) DO UPDATE SET etag=excluded.etag').bind(row.id, number, part.etag).run();
     return json({ partNumber: number });
@@ -332,7 +334,7 @@ async function multipart(context, db, user, route, method) {
     const results = await db.prepare('SELECT part_number,etag FROM studio_upload_parts WHERE upload_id=? ORDER BY part_number').bind(row.id).all();
     const parts = results.results || [];
     if (parts.length !== row.part_count || parts.some((part, index) => part.part_number !== index + 1)) return fail('仍有文件分片未上传完成', 409);
-    if (!await reserve(db, user, row.size_bytes)) return fail('账号已停用或权限已变更', 403);
+    if (!await reserve(db, user, row.size_bytes)) return fail('上传额度不足或账号权限已变更', 403);
     const metadata = studioMetadata(request, user, { id: row.album_id }, row.file_name, row.mime_type, row.size_bytes);
     let completed = false;
     try {

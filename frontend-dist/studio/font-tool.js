@@ -1,7 +1,7 @@
 const $ = id => document.getElementById(id);
 const FORMATS = new Set(['ttf', 'otf', 'woff', 'woff2']);
 const MIME = { ttf: 'font/ttf', otf: 'font/otf', woff: 'font/woff', woff2: 'font/woff2' };
-const MAX_FILE = 25 * 1024 * 1024;
+const DIRECT_UPLOAD_LIMIT = 25 * 1024 * 1024;
 
 export function initFontTool({ api, state, refreshProfile, refreshAlbums, refreshFiles, notice }) {
   const selected = { files: [], urls: [], busy: false };
@@ -23,7 +23,7 @@ export function initFontTool({ api, state, refreshProfile, refreshAlbums, refres
     if (selected.busy) return;
     const picked = files.filter(file => FORMATS.has(file.name.split('.').pop()?.toLowerCase()));
     if (picked.length !== files.length || !picked.length) return notice('请选择 TTF、OTF、WOFF 或 WOFF2 字体', true);
-    if (picked.some(file => !file.size || file.size > MAX_FILE)) return notice('每份字体需在 25 MB 以内', true);
+    if (picked.some(file => !file.size)) return notice('请选择非空的字体文件', true);
     reset(); selected.files = picked; run.disabled = false;
     for (const file of picked) {
       const item = document.createElement('span'); item.textContent = `✿ ${file.name}`;
@@ -48,6 +48,27 @@ export function initFontTool({ api, state, refreshProfile, refreshAlbums, refres
     const actions = document.createElement('div'); actions.className = 'font-result-actions';
     top.append(title); card.append(top, detail, actions); results.append(card);
     return { detail, actions };
+  }
+  async function saveFont(blob, name, albumId, onPart) {
+    if (blob.size <= DIRECT_UPLOAD_LIMIT) {
+      const form = new FormData(); form.set('albumId', albumId); form.set('file', blob, name);
+      return api('files', { method: 'POST', body: form });
+    }
+    const started = await api('multipart/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ albumId, name, type: blob.type, size: blob.size })
+    });
+    try {
+      for (let number = 1; number <= started.partCount; number++) {
+        onPart(number, started.partCount);
+        const part = blob.slice((number - 1) * started.partSize, Math.min(number * started.partSize, blob.size));
+        await api(`multipart/${encodeURIComponent(started.id)}/parts/${number}`, { method: 'PUT', body: part });
+      }
+      return await api(`multipart/${encodeURIComponent(started.id)}/complete`, { method: 'POST' });
+    } catch (error) {
+      await api(`multipart/${encodeURIComponent(started.id)}/abort`, { method: 'POST' }).catch(() => {});
+      throw error;
+    }
   }
   run.addEventListener('click', async () => {
     if (selected.busy || !selected.files.length) return;
@@ -74,13 +95,10 @@ export function initFontTool({ api, state, refreshProfile, refreshAlbums, refres
           download.href = objectUrl; download.download = name; download.textContent = '下载字体 ↓';
           row.actions.append(download);
           row.detail.textContent = `已转换为 ${target.toUpperCase()} · 正在自动保存…`;
-          if (blob.size > MAX_FILE) {
-            row.detail.textContent = '已转换，生成文件超过 25 MB，无法自动保存；可以下载到本机。';
-            continue;
-          }
           try {
-            const form = new FormData(); form.set('albumId', albumId); form.set('file', blob, name);
-            const saved = await api('files', { method: 'POST', body: form });
+            const saved = await saveFont(blob, name, albumId, (part, total) => {
+              row.detail.textContent = `正在分片保存 ${part} / ${total}…`;
+            });
             savedCount++;
             const link = document.createElement('button'); link.className = 'button primary';
             link.type = 'button'; link.textContent = '复制图床链接 ♡';
@@ -89,7 +107,7 @@ export function initFontTool({ api, state, refreshProfile, refreshAlbums, refres
               catch { notice(`复制失败，链接：${saved.url}`, true); }
             });
             row.actions.append(link);
-            row.detail.textContent = `已保存到相册 · ${(blob.size / 1024).toFixed(1)} KB`;
+            row.detail.textContent = `已保存到相册 · ${(blob.size / 1048576).toFixed(1)} MB`;
           } catch (error) { row.detail.textContent = `字体已转换，自动保存失败：${error.message}。仍可下载。`; }
         } catch (error) { row.detail.textContent = `转换失败：${error.message}`; }
       }
