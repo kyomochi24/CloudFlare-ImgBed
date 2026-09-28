@@ -35,6 +35,25 @@ async function call(env, path, method = 'GET', body, cookie = '') {
   return { response, data };
 }
 
+test('regular users can save genuine font formats but not renamed arbitrary files', async () => {
+  const { env, objects } = environment();
+  const admin = 'admin_session=admin-test';
+  await call(env, 'admin/users', 'POST', { username: 'fontmaker', password: 'very-long-password-123' }, admin);
+  const login = await call(env, 'login', 'POST', { username: 'fontmaker', password: 'very-long-password-123' });
+  const cookie = login.response.headers.get('Set-Cookie').split(';')[0];
+  const album = (await call(env, 'albums', 'GET', null, cookie)).data.albums[0].id;
+  const ttf = new Uint8Array(28); ttf.set([0, 1, 0, 0, 0, 1], 0);
+  const font = new FormData(); font.set('albumId', album); font.set('file', new Blob([ttf], { type: 'font/ttf' }), 'hello.ttf');
+  const saved = await call(env, 'files', 'POST', font, cookie);
+  assert.equal(saved.response.status, 200);
+  assert.equal(objects.get(saved.data.id).byteLength, ttf.byteLength);
+  assert.match(saved.data.url, /\.ttf$/);
+  const fake = new FormData(); fake.set('albumId', album); fake.set('file', new Blob(['not a font'], { type: 'font/woff2' }), 'fake.woff2');
+  assert.equal((await call(env, 'files', 'POST', fake, cookie)).response.status, 400);
+  const renamed = new FormData(); renamed.set('albumId', album); renamed.set('file', new Blob([ttf], { type: 'font/ttf' }), 'hello.otf');
+  assert.equal((await call(env, 'files', 'POST', renamed, cookie)).response.status, 400);
+});
+
 test('local account, album, original upload, application review, and delete', async () => {
   const { env, sqlite, objects } = environment();
   const adminCookie = 'admin_session=admin-test';

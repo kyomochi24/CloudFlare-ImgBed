@@ -1,6 +1,7 @@
 import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=20260922d';
 import { initStudioTools } from './tools.js?v=20260922j';
 import { initCandy } from './candy.js?v=20260923b';
+import { initFontTool } from './font-tool.js?v=20260928-font1';
 
 (() => {
   'use strict';
@@ -77,6 +78,7 @@ import { initCandy } from './candy.js?v=20260923b';
     $('clear-selected-albums').disabled = state.deletingAlbums || !state.selectedAlbums.size;
     $('delete-selected-albums').disabled = state.deletingAlbums || !state.selectedAlbums.size;
     $('current-album-name').textContent = state.albums.find(a => a.id === state.albumId)?.name || '我的相册';
+    $('font-album').textContent = state.albums.find(a => a.id === state.albumId)?.name || '当前相册';
     const target = $('move-target');
     const previous = target.value;
     const others = state.albums.filter(a => a.id !== state.albumId);
@@ -93,6 +95,7 @@ import { initCandy } from './candy.js?v=20260923b';
   }
   async function refreshProfile() { const data = await api('me'); state.user = data.user; state.application = data.application; renderProfile(); showMember(); }
   const studioTools = initStudioTools({ api, state, refreshProfile, refreshAlbums, notice });
+  initFontTool({ api, state, refreshProfile, refreshAlbums, refreshFiles, notice });
   const candy = initCandy({ api, state, refreshProfile, refreshAlbums, notice });
   async function refreshAlbums() {
     const data = await api('albums'); state.albums = data.albums;

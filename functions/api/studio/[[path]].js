@@ -13,6 +13,7 @@ const SESSION_SECONDS = 7 * 86400;
 const DEFAULT_GUILD_IDS = '1291925535324110879,1379304008157499423';
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
 const EXTENSIONS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif', 'image/bmp': 'bmp' };
+const FONT_TYPES = { 'font/ttf': 'ttf', 'font/otf': 'otf', 'font/woff': 'woff', 'font/woff2': 'woff2' };
 const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
 const ANNOUNCEMENT_KEY = 'manage@studio@announcement';
 const ANNOUNCEMENT_IMAGE_LIMIT = 5 * 1024 * 1024;
@@ -170,6 +171,18 @@ async function login(db, request) {
   await db.prepare('DELETE FROM studio_login_attempts WHERE key=?').bind(key).run();
   return sessionResponse(db, user);
 }
+function actualFontType(bytes) {
+  if (bytes.length < 12) return null;
+  const tag = (start) => String.fromCharCode(...bytes.slice(start, start + 4));
+  const validFlavor = offset => tag(offset) === 'OTTO' || tag(offset) === 'true' || [0, 1, 0, 0].every((byte, i) => bytes[offset + i] === byte);
+  const uint16 = offset => (bytes[offset] << 8) | bytes[offset + 1];
+  const uint32 = offset => ((bytes[offset] * 0x1000000) + (bytes[offset + 1] << 16) + (bytes[offset + 2] << 8) + bytes[offset + 3]) >>> 0;
+  if (validFlavor(0) && uint16(4) > 0 && 12 + uint16(4) * 16 <= bytes.length) return tag(0) === 'OTTO' ? 'font/otf' : 'font/ttf';
+  if ((tag(0) === 'wOFF' || tag(0) === 'wOF2') && bytes.length >= 48 && validFlavor(4) && uint32(8) === bytes.length && uint16(12) > 0) {
+    return tag(0) === 'wOFF' ? 'font/woff' : 'font/woff2';
+  }
+  return null;
+}
 async function sourceRateLimited(db, userId) {
   const key = await sha(`studio-source:${userId}`), now = Date.now(), windowMs = 10 * 60 * 1000, limit = 120;
   const attempt = await db.prepare('SELECT window_start,attempts FROM studio_login_attempts WHERE key=?').bind(key).first();
@@ -246,9 +259,12 @@ async function saveImage(context, db, user, albumId, file) {
   const album = await db.prepare('SELECT id FROM studio_albums WHERE id=? AND user_id=?').bind(albumId, user.id).first();
   if (!album) return fail('相册不存在', 404);
   const { bytes, type, name, sourceUrl } = file;
-  if (bytes.byteLength < 1 || bytes.byteLength > SINGLE_FILE_LIMIT || (!user.is_super && (!IMAGE_TYPES.has(type) || actualImageType(bytes) !== type))) return fail('普通账号只接受 25 MB 以内的 PNG、JPEG、WebP、GIF、AVIF 或 BMP 原图', 400);
+  const fontType = actualFontType(bytes);
+  const fontExtension = FONT_TYPES[fontType];
+  const validFont = fontType === type && cleanName(name).toLowerCase().endsWith(`.${fontExtension}`);
+  if (bytes.byteLength < 1 || bytes.byteLength > SINGLE_FILE_LIMIT || (!user.is_super && !(IMAGE_TYPES.has(type) && actualImageType(bytes) === type) && !validFont)) return fail('普通账号只接受 25 MB 以内的图片或有效的 TTF、OTF、WOFF、WOFF2 字体', 400);
   if (!await reserve(db, user, bytes.byteLength)) return fail('上传额度不足', 403);
-  const extension = user.is_super ? (cleanName(name).match(/\.([a-z0-9]{1,10})$/i)?.[1] || 'bin').toLowerCase() : EXTENSIONS[type];
+  const extension = user.is_super ? (cleanName(name).match(/\.([a-z0-9]{1,10})$/i)?.[1] || 'bin').toLowerCase() : fontExtension || EXTENSIONS[type];
   const id = shortObjectKey(extension);
   const metadata = studioMetadata(request, user, album, cleanName(name) || `file.${extension}`, type, bytes.byteLength);
   try {
@@ -260,7 +276,7 @@ async function saveImage(context, db, user, albumId, file) {
   } catch (error) {
     console.error('Studio upload failed', error);
     await Promise.allSettled([env.img_r2.delete(id), getDatabase(env).delete(id), refund(db, user.id, bytes.byteLength)]);
-    return fail('保存图片失败，请重试', 500);
+    return fail('保存文件失败，请重试', 500);
   }
 }
 function studioMetadata(request, user, album, name, type, size) {
@@ -478,10 +494,10 @@ async function handleUser(context, db, user, route, method) {
     return json({ ok: true, moved: ids.length });
   }
   if (route === 'files' && method === 'POST') {
-    if (Number(request.headers.get('Content-Length') || 0) > SINGLE_FILE_LIMIT + 65536) return fail('单张图片不能超过 25 MB', 413);
+    if (Number(request.headers.get('Content-Length') || 0) > SINGLE_FILE_LIMIT + 65536) return fail('单个文件不能超过 25 MB', 413);
     const form = await request.formData();
     const uploaded = form.get('file');
-    if (!uploaded || typeof uploaded.arrayBuffer !== 'function' || uploaded.size > SINGLE_FILE_LIMIT) return fail('请选择 25 MB 以内的图片');
+    if (!uploaded || typeof uploaded.arrayBuffer !== 'function' || uploaded.size > SINGLE_FILE_LIMIT) return fail('请选择 25 MB 以内的文件');
     return saveImage(context, db, user, String(form.get('albumId') || ''), { bytes: new Uint8Array(await uploaded.arrayBuffer()), type: uploaded.type, name: uploaded.name });
   }
   if (route.startsWith('multipart/')) return multipart(context, db, user, route, method);

@@ -109,7 +109,7 @@ export async function onRequest(context) {  // Contents of context object
     /* Cloudflare R2渠道 */
     if (imgRecord.metadata?.Channel === 'CloudflareR2') {
         const response = await handleR2File(context, fileId, encodedFileName, fileType);
-        if (fileId.startsWith('studio/') && !['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp'].includes(fileType) && response.status < 400) {
+        if (fileId.startsWith('studio/') && !['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp', 'font/ttf', 'font/otf', 'font/woff', 'font/woff2'].includes(fileType) && response.status < 400) {
             const headers = new Headers(response.headers);
             headers.set('Content-Type', 'application/octet-stream');
             headers.set('Content-Disposition', `attachment; filename="${encodedFileName}"; filename*=UTF-8''${encodedFileName}`);
