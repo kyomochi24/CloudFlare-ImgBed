@@ -1,0 +1,226 @@
+<!doctype html><html lang="zh-CN" data-channel="__CHANNEL__"><head><meta charset="utf-8"><base href="__BASE__"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-__NONCE__'; style-src https: http: data: 'unsafe-inline'; img-src https: http: data: blob:; font-src https: http: data:; connect-src 'none'; form-action 'none'; base-uri 'none'"><title>酒馆美化预览</title>
+<link rel="stylesheet" href="vendor/sillytavern/fonts.css"><link rel="stylesheet" href="vendor/sillytavern/css/fontawesome.min.css"><link rel="stylesheet" href="vendor/sillytavern/css/solid.min.css"><link rel="stylesheet" href="vendor/sillytavern/style.css"><link rel="stylesheet" href="vendor/sillytavern/css/st-tailwind.css"><link rel="stylesheet" href="vendor/sillytavern/css/mobile-styles.css"><link rel="stylesheet" href="frame.css"><style id="custom-style"></style><script nonce="__NONCE__" src="frame.js" defer></script></head><body><div id="bg1"></div><div id="bg_custom"></div><div id="top-bar"></div><div id="top-settings-holder"><div id="ai-config-button" class="drawer"><div class="drawer-toggle drawer-header">
+                <div id="leftNavDrawerIcon" class="drawer-icon fa-solid fa-sliders fa-fw closedIcon" title="AI Response Configuration" data-i18n="[title]AI Response Configuration"></div>
+            </div>
+            <div id="left-nav-panel" class="drawer-content closedDrawer"><h3>生成设置</h3><p>这是菜单外观预览。</p><label>示例名称 <input class="text_pole" value="甜品屋"></label><label>示例选项 <input type="checkbox" checked></label><div class="menu_button workshop-close">收起菜单</div></div></div><div id="sys-settings-button" class="drawer"><div class="drawer-toggle drawer-header">
+                <div id="API-status-top" class="drawer-icon fa-solid fa-plug-circle-exclamation fa-fw closedIcon" title="API Connections" data-i18n="[title]API Connections;[no_connection_text]api_no_connection" no_connection_text="No connection..."></div>
+            </div>
+            <div id="rm_api_block" class="drawer-content closedDrawer"><h3>连接设置</h3><p>这是菜单外观预览。</p><label>示例名称 <input class="text_pole" value="甜品屋"></label><label>示例选项 <input type="checkbox" checked></label><div class="menu_button workshop-close">收起菜单</div></div></div><div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle">
+                <div class="drawer-icon fa-solid fa-font fa-fw closedIcon" title="AI Response Formatting" data-i18n="[title]AI Response Formatting"></div>
+            </div>
+            <div id="AdvancedFormatting" class="drawer-content closedDrawer"><h3>格式设置</h3><p>这是菜单外观预览。</p><label>示例名称 <input class="text_pole" value="甜品屋"></label><label>示例选项 <input type="checkbox" checked></label><div class="menu_button workshop-close">收起菜单</div></div></div><div id="WI-SP-button" class="drawer"><div class="drawer-toggle drawer-header">
+                <div id="WIDrawerIcon" class="drawer-icon fa-solid fa-book-atlas fa-fw closedIcon " title="World Info" data-i18n="[title]World Info"></div>
+            </div>
+            <div id="WorldInfo" class="drawer-content closedDrawer"><h3>世界书</h3><p>这是菜单外观预览。</p><label>示例名称 <input class="text_pole" value="甜品屋"></label><label>示例选项 <input type="checkbox" checked></label><div class="menu_button workshop-close">收起菜单</div></div></div><div id="user-settings-button" class="drawer"><div class="drawer-toggle">
+                <div class="drawer-icon fa-solid fa-user-cog fa-fw closedIcon" title="User Settings" data-i18n="[title]User Settings"></div>
+            </div>
+            <div id="user-settings-block" class="drawer-content closedDrawer"><h3>用户设置</h3><p>这是菜单外观预览。</p><label>示例名称 <input class="text_pole" value="甜品屋"></label><label>示例选项 <input type="checkbox" checked></label><div class="menu_button workshop-close">收起菜单</div></div></div><div id="backgrounds-button" class="drawer"><div id="backgrounds-drawer-toggle" class="drawer-toggle drawer-header" title="Change Background Image" data-i18n="[title]Change Background Image">
+                <div class="drawer-icon fa-solid fa-panorama fa-fw closedIcon"></div>
+            </div>
+            <div id="Backgrounds" class="drawer-content closedDrawer"><h3>背景</h3><p>这是菜单外观预览。</p><label>示例名称 <input class="text_pole" value="甜品屋"></label><label>示例选项 <input type="checkbox" checked></label><div class="menu_button workshop-close">收起菜单</div></div></div><div id="extensions-settings-button" class="drawer"><div class="drawer-toggle">
+                <div class="drawer-icon fa-solid fa-cubes fa-fw closedIcon" title="Extensions" data-i18n="[title]Extensions"></div>
+            </div>
+            <div id="rm_extensions_block" class="drawer-content closedDrawer"><h3>扩展</h3><p>这是菜单外观预览。</p><label>示例名称 <input class="text_pole" value="甜品屋"></label><label>示例选项 <input type="checkbox" checked></label><div class="menu_button workshop-close">收起菜单</div></div></div><div id="persona-management-button" class="drawer"><div class="drawer-toggle">
+                <div class="drawer-icon fa-solid fa-face-smile fa-fw closedIcon" title="Persona Management" data-i18n="[title]Persona Management"></div>
+            </div>
+            <div id="PersonaManagement" class="drawer-content closedDrawer"><h3>用户头像</h3><p>这是菜单外观预览。</p><label>示例名称 <input class="text_pole" value="甜品屋"></label><label>示例选项 <input type="checkbox" checked></label><div class="menu_button workshop-close">收起菜单</div></div></div><div id="rightNavHolder" class="drawer"><div id="unimportantYes" class="drawer-toggle drawer-header">
+                <div id="rightNavDrawerIcon" class="drawer-icon fa-solid fa-address-card fa-fw closedIcon" title="Character Management" data-i18n="[title]Character Management">
+                </div>
+            </div>
+            <div id="right-nav-panel" class="drawer-content closedDrawer"><h3>角色管理</h3><p>这是菜单外观预览。</p><label>示例名称 <input class="text_pole" value="甜品屋"></label><label>示例选项 <input type="checkbox" checked></label><div class="menu_button workshop-close">收起菜单</div></div></div></div><div id="sheld">
+        <div id="sheldheader" class="fa-solid fa-grip drag-grabber"></div>
+        <div id="chat">
+        </div>
+        <div id="form_sheld">
+            <div id="dialogue_del_mes">
+                <div id="dialogue_del_mes_ok" data-i18n="Delete" class="menu_button">Delete</div>
+                <div id="dialogue_del_mes_cancel" data-i18n="Cancel" class="menu_button">Cancel</div>
+            </div>
+            <div id="send_form" class="">
+                <form id="file_form" class="wide100p displayNone">
+                    <div class="file_attached">
+                        <input id="file_form_input" type="file" multiple hidden>
+                        <input id="embed_file_input" type="file" multiple hidden>
+                        <i class="fa-solid fa-file-alt"></i>
+                        <span class="file_name">File Name</span>
+                        <span class="file_size">File Size</span>
+                        <button id="file_form_reset" type="reset" class="menu_button" title="Remove the file" data-i18n="[title]Remove the file">
+                            <i class="fa fa-times"></i>
+                        </button>
+                    </div>
+                </form>
+                <div id="nonQRFormItems">
+                    <div id="leftSendForm" class="alignContentCenter">
+                        <div id="options_button" class="fa-solid fa-bars interactable"></div>
+                    </div>
+                    <textarea id="send_textarea" name="text" class="mdHotkeys" data-i18n="[no_connection_text]Not connected to API!;[connected_text]Type a message, or /? for help" placeholder="在这里输入，预览输入框效果…" no_connection_text="Not connected to API!" connected_text="Type a message, or /? for help" autocomplete="off" aria-label="酒馆预览输入框"></textarea>
+                    <div id="rightSendForm" class="alignContentCenter">
+                        <div id="stscript_continue" title="Continue script execution" class="stscript_btn stscript_continue" data-i18n="[title]Continue script execution">
+                            <i class="fa-solid fa-play"></i>
+                        </div>
+                        <div id="stscript_pause" title="Pause script execution" class="stscript_btn stscript_pause" data-i18n="[title]Pause script execution">
+                            <i class="fa-solid fa-pause"></i>
+                        </div>
+                        <div id="stscript_stop" title="Abort script execution" class="stscript_btn stscript_stop" data-i18n="[title]Abort script execution">
+                            <i class="fa-solid fa-stop"></i>
+                        </div>
+                        <div id="mes_stop" title="Abort request" class="mes_stop" data-i18n="[title]Abort request">
+                            <i class="fa-solid fa-circle-stop"></i>
+                        </div>
+                        <div id="mes_impersonate" class="fa-solid fa-user-secret interactable displayNone" title="Ask AI to write your message for you" data-i18n="[title]Ask AI to write your message for you" tabindex="0"></div>
+                        <div id="mes_continue" class="fa-fw fa-solid fa-arrow-right interactable displayNone" title="Continue the last message" data-i18n="[title]Continue the last message"></div>
+                        <div id="send_but" class="fa-solid fa-paper-plane interactable" title="Send a message" data-i18n="[title]Send a message"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="options" class="font-family-reset" style="display: none;">
+        <div class="options-content">
+            <a id="option_close_chat" class="displayNone">
+                <i class="fa-lg fa-solid fa-times"></i>
+                <span data-i18n="Close chat">关闭聊天</span>
+            </a>
+            <a id="option_settings" class="displayNone">
+                <i class="fa-lg fa-solid fa-cog"></i>
+                <span data-i18n="Toggle Panels">Toggle Panels</span>
+            </a>
+            <a id="option_toggle_AN">
+                <i class="fa-lg fa-solid fa-note-sticky"></i>
+                <span data-i18n="Author's Note">Author's Note</span>
+            </a>
+            <a id="option_toggle_CFG">
+                <i class="fa-lg fa-solid fa-scale-balanced"></i>
+                <span data-i18n="CFG Scale">CFG Scale</span>
+            </a>
+            <a id="option_toggle_logprobs">
+                <i class="fa-lg fa-solid fa-pie-chart"></i>
+                <span data-i18n="Token Probabilities">Token Probabilities</span>
+            </a>
+            <a id="option_back_to_main">
+                <i class="fa-lg fa-solid fa-left-long"></i>
+                <span data-i18n="Back to parent chat">Back to parent chat</span>
+            </a>
+            <a id="option_new_bookmark">
+                <i class="fa-lg fa-solid fa-flag"></i>
+                <span data-i18n="Save checkpoint">Save checkpoint</span>
+            </a>
+            <a id="option_convert_to_group">
+                <i class="fa-lg fa-solid fa-people-arrows"></i>
+                <span data-i18n="Convert to group">Convert to group</span>
+            </a>
+            <hr>
+            <a id="option_start_new_chat">
+                <i class="fa-lg fa-solid fa-comments"></i>
+                <span data-i18n="Start new chat">新聊天</span>
+            </a>
+            <a id="option_close_chat">
+                <i class="fa-lg fa-solid fa-times"></i>
+                <span data-i18n="Close chat">关闭聊天</span>
+            </a>
+            <a id="option_select_chat">
+                <i class="fa-lg fa-solid fa-address-book"></i>
+                <span data-i18n="Manage chat files">管理聊天</span>
+            </a>
+            <hr>
+            <a id="option_delete_mes">
+                <i class="fa-lg fa-solid fa-trash-can"></i>
+                <span data-i18n="Delete messages">删除消息</span>
+            </a>
+            <a id="option_regenerate">
+                <i class="fa-lg fa-solid fa-repeat"></i>
+                <span data-i18n="Regenerate">重新生成</span>
+            </a>
+            <a id="option_impersonate" title="Ask AI to write your message for you" data-i18n="[title]Ask AI to write your message for you">
+                <i class="fa-lg fa-solid fa-user-secret"></i>
+                <span data-i18n="Impersonate">代写</span>
+            </a>
+            <a id="option_continue" title="Continue the last message" data-i18n="[title]Continue the last message">
+                <i class="fa-lg fa-solid fa-arrow-right"></i>
+                <span data-i18n="Continue">继续</span>
+            </a>
+        </div>
+    </div>
+
+    <template id="message_template"><div class="mes" mesid="" ch_name="" is_user="" is_system="" bookmark_link="">
+                <div class="for_checkbox"></div><input type="checkbox" class="del_checkbox">
+                <div class="mesAvatarWrapper">
+                    <div class="avatar">
+                        <img src="">
+                    </div>
+                    <div class="mesIDDisplay"></div>
+                    <div class="mes_timer"></div>
+                    <div class="tokenCounterDisplay"></div>
+                </div>
+                <div class="swipe_left fa-solid fa-chevron-left"></div>
+                <div class="mes_block">
+                    <div class="ch_name flex-container justifySpaceBetween">
+                        <div class="flex-container flex1 alignitemscenter">
+                            <div class="flex-container alignItemsBaseline">
+                                <span class="name_text">${characterName}</span>
+                                <i class="mes_ghost fa-solid fa-ghost" title="This message is invisible for the AI" data-i18n="[title]This message is invisible for the AI"></i>
+                                <small class="timestamp"></small>
+                            </div>
+                        </div>
+                        <div class="mes_buttons">
+                            <div title="Message Actions" class="mes_button extraMesButtonsHint fa-solid fa-ellipsis" data-i18n="[title]Message Actions"></div>
+                            <div class="extraMesButtons">
+                                <div title="Translate message" class="mes_button mes_translate fa-solid fa-language" data-i18n="[title]Translate message"></div>
+                                <div title="Generate Image" class="mes_button sd_message_gen fa-solid fa-paintbrush" data-i18n="[title]Generate Image"></div>
+                                <div title="Narrate" class="mes_button mes_narrate fa-solid fa-bullhorn" data-i18n="[title]Narrate"></div>
+                                <div title="Prompt" class="mes_button mes_prompt fa-solid fa-square-poll-horizontal " data-i18n="[title]Prompt" style="display: none;"></div>
+                                <div title="Exclude message from prompts" class="mes_button mes_hide fa-solid fa-eye" data-i18n="[title]Exclude message from prompts"></div>
+                                <div title="Include message in prompts" class="mes_button mes_unhide fa-solid fa-eye-slash" data-i18n="[title]Include message in prompts"></div>
+                                <div title="Toggle media display style" class="mes_button mes_media_gallery fa-solid fa-photo-film" data-i18n="[title]Toggle media display style"></div>
+                                <div title="Toggle media display style" class="mes_button mes_media_list fa-solid fa-table-cells-large" data-i18n="[title]Toggle media display style"></div>
+                                <div title="Embed file or image" class="mes_button mes_embed fa-solid fa-paperclip" data-i18n="[title]Embed file or image"></div>
+                                <div title="Jump to swipe history" class="mes_button mes_swipe_picker fa-solid fa-bookmark" data-i18n="[title]Jump to swipe history" style="display: none;"></div>
+                                <div title="Create checkpoint" class="mes_button mes_create_bookmark fa-regular fa-solid fa-flag-checkered" data-i18n="[title]Create checkpoint"></div>
+                                <div title="Create branch" class="mes_button mes_create_branch fa-regular fa-code-branch" data-i18n="[title]Create Branch"></div>
+                                <div title="Copy" class="mes_button mes_copy fa-solid fa-copy " data-i18n="[title]Copy"></div>
+                            </div>
+                            <div data-tooltip="Click to open checkpoint chat
+Shift+Click to replace the existing checkpoint with a new one" class="mes_button mes_bookmark fa-solid fa-flag" data-i18n="[data-tooltip]Open checkpoint chat
+Shift+Click to replace the existing checkpoint with a new one"></div>
+                            <div title="Edit" class="mes_button mes_edit fa-solid fa-pencil " data-i18n="[title]Edit"></div>
+                        </div>
+                        <div class="mes_edit_buttons">
+                            <div class="mes_edit_done menu_button  fa-solid fa-check" title="Confirm" data-i18n="[title]Confirm"></div>
+                            <div class="mes_edit_copy menu_button  fa-solid fa-copy" title="Copy this message" data-i18n="[title]Copy this message"></div>
+                            <div class="mes_edit_add_reasoning menu_button fa-solid fa-lightbulb" title="Add a reasoning block" data-i18n="[title]Add a reasoning block"></div>
+                            <div class="mes_edit_delete menu_button  fa-solid fa-trash-can" title="Delete this message" data-i18n="[title]Delete this message"></div>
+                            <div class="mes_edit_up menu_button  fa-solid fa-chevron-up " title="Move message up" data-i18n="[title]Move message up"></div>
+                            <div class="mes_edit_down menu_button  fa-solid fa-chevron-down" title="Move message down" data-i18n="[title]Move message down"></div>
+                            <div class="mes_edit_cancel menu_button  fa-solid fa-xmark" title="Cancel" data-i18n="[title]Cancel"></div>
+                        </div>
+                    </div>
+                    <details class="mes_reasoning_details">
+                        <summary class="mes_reasoning_summary flex-container">
+                            <div class="mes_reasoning_header_block flex-container">
+                                <div class="mes_reasoning_header flex-container">
+                                    <span class="mes_reasoning_header_title" data-i18n="Thought for some time">Thought for some time</span>
+                                    <div class="mes_reasoning_arrow fa-solid fa-chevron-up"></div>
+                                </div>
+                            </div>
+                            <div class="mes_reasoning_actions flex-container">
+                                <div class="mes_reasoning_edit_done menu_button edit_button fa-solid fa-check" title="Confirm" data-i18n="[title]Confirm Edit"></div>
+                                <div class="mes_reasoning_delete menu_button edit_button fa-solid fa-trash-can" title="Remove reasoning" data-i18n="[title]Remove reasoning"></div>
+                                <div class="mes_reasoning_edit_cancel menu_button edit_button fa-solid fa-xmark" title="Cancel edit" data-i18n="[title]Cancel edit"></div>
+                                <div class="mes_reasoning_close_all mes_button fa-solid fa-minimize" title="Collapse all reasoning blocks" data-i18n="[title]Collapse all reasoning blocks"></div>
+                                <div class="mes_reasoning_copy mes_button fa-solid fa-copy" title="Copy reasoning" data-i18n="[title]Copy reasoning"></div>
+                                <div class="mes_reasoning_edit mes_button fa-solid fa-pencil" title="Edit reasoning" data-i18n="[title]Edit reasoning"></div>
+                            </div>
+                        </summary>
+                        <div class="mes_reasoning"></div>
+                    </details>
+                    <div class="mes_text"></div>
+                    <div class="mes_media_wrapper"></div>
+                    <div class="mes_file_wrapper"></div>
+                    <div class="mes_bias"></div>
+                </div>
+                <div class="flex-container swipeRightBlock flexFlowColumn flexNoGap">
+                    <div class="swipe_right fa-solid fa-chevron-right"></div>
+                    <div class="swipes-counter"></div>
+                </div>
+            </div>
+        </template></body></html>

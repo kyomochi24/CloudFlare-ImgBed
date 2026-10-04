@@ -1,0 +1,9 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+   Preview-only state glue. User custom CSS is loaded after this file. */
+#bg1{background-image:radial-gradient(ellipse at 10% 15%,#747075 0,transparent 55%),linear-gradient(135deg,#44464b,#22262c);background-size:cover;background-position:center}
+#bg_custom{display:none}.workshop-close{width:fit-content}.drawer-content{max-height:70vh;overflow:auto}.drawer-content label{display:block;margin:12px 0}.drawer-content .text_pole{width:100%}
+#options{position:fixed;left:max(0px,calc((100vw - var(--sheldWidth))/2));bottom:var(--bottomFormBlockSize);z-index:4000}
+#send_but{display:block}#mes_stop{display:none}body.workshop-generating #send_but{display:none}body.workshop-generating #mes_stop{display:block}
+.mes.workshop-editing .mes_buttons{display:none}.mes.workshop-editing .mes_edit_buttons{display:flex}.mes.workshop-editing .mes_text{display:none}.mes:not(.workshop-editing) .edit_textarea{display:none}
+.mes.workshop-actions .extraMesButtons{display:flex}.mes.workshop-actions .mes_buttons{overflow:visible;flex-wrap:wrap}
+body.workshop-inspect *{cursor:crosshair!important}[data-workshop-hover]{outline:2px dashed #f0b6c6!important;outline-offset:2px}
