@@ -29,3 +29,16 @@ User exports preserve unknown theme fields. Preview-only settings are saved in `
 - The real production album login/API and iOS Safari/Tauri have not been exercised by these local checks.
 
 This package does not deploy or push changes to the original repository.
+
+
+## 2026-10-05 · v2
+
+- `inspector.js`: DOM-derived selectors, current-node/ancestor/overlap navigation, user/character/all/single-node scope, pseudo-element inspection and computed properties. Existing ID/class information comes from actual preview DOM; transient editor markers are excluded.
+- `inspector-ui.mjs`: inspection panel, code-search handoff, searchable official-source catalog and explicit visible/hidden/unmounted statuses.
+- `selector-catalog.mjs`: 68 curated entries plus source-derived names (1,888 entries total). Source: upstream public/index.html, plus known dynamic loader nodes verified in action-loader.js. Catalog membership is not a promise of preview coverage.
+- `search.mjs`: literal string search with optional case sensitivity, original-text offsets, previous/next wrapping, literal replacements (including dollar signs), current line/column and line navigation. Ctrl/Cmd+F opens search; Ctrl/Cmd+G opens line jump; Enter/Shift+Enter navigate while search has focus. Editor undo/redo covers replacements.
+- `sample.scene` adds chat/preloader/loader in the existing v1 project schema. Existing IndexedDB draft database/key is retained; old drafts default to chat. Scene settings remain outside exported theme JSON.
+- Added initial preloader and simulated loader scene using upstream IDs, with an editor-side exit button. Full popup orchestration is not emulated.
+- Cache version 20261005a is applied to editor/frame scripts, styles and module imports.
+
+Validation: 11 unit tests plus Chromium desktop/mobile checks, including 140-line search navigation, literal replacement and undo, ancestor switching, pseudo content, all-message scope, loaders, missing-node catalog handling, arbitrary input inspection and mobile horizontal-overflow checks. Existing v1 draft, export, viewport, isolation and mocked album tests also pass. Production account APIs and Safari/Tauri are still untested locally.

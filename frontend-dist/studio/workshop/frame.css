@@ -7,3 +7,9 @@
 .mes.workshop-editing .mes_buttons{display:none}.mes.workshop-editing .mes_edit_buttons{display:flex}.mes.workshop-editing .mes_text{display:none}.mes:not(.workshop-editing) .edit_textarea{display:none}
 .mes.workshop-actions .extraMesButtons{display:flex}.mes.workshop-actions .mes_buttons{overflow:visible;flex-wrap:wrap}
 body.workshop-inspect *{cursor:crosshair!important}[data-workshop-hover]{outline:2px dashed #f0b6c6!important;outline-offset:2px}
+
+
+/* Simulated boot/loading stages; these containers are not exported to the theme. */
+#preloader[hidden],#workshop-loader-stage[hidden]{display:none!important}
+#workshop-loader-stage{position:fixed;inset:0;z-index:999998;background:var(--SmartThemeBlurTintColor)}
+#workshop-loader-stage>#loader{position:absolute;inset:0}
