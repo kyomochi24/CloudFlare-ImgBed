@@ -1,6 +1,6 @@
 import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=20260922d';
 import { initStudioTools } from './tools.js?v=20260922j';
-import { initCandy } from './candy.js?v=20260923b';
+import { initCandy } from './candy.js?v=20261014a';
 import { initFontTool } from './font-tool.js?v=20260928-font3';
 
 (() => {
@@ -414,3 +414,4 @@ import { initFontTool } from './font-tool.js?v=20260928-font3';
   $('download-json').addEventListener('click', () => { const title = $('json-output-name').value.trim(); if (!title) { notice('请填写搬家后的美化名称', true); $('json-output-name').focus(); return; } let changed; try { changed = renameTheme(replaceLinks(state.rawJson, state.replacements), title); } catch { return notice('替换后 JSON 校验失败，请联系管理员', true); } const blob = new Blob([changed], { type: 'application/json;charset=utf-8' }); const objectUrl = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = objectUrl; anchor.download = (title.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/[. ]+$/g, '').slice(0, 100) || '搬家后的美化') + '.json'; anchor.click(); setTimeout(() => URL.revokeObjectURL(objectUrl), 1000); });
   start();
 })();
+

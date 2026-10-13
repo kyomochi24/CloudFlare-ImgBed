@@ -30,7 +30,7 @@ document.body.dataset.smoke=JSON.stringify({editor:!document.querySelector('#can
 const server = createServer(async (request, response) => {
   if (request.url === '/smoke') { response.setHeader('Content-Type', 'text/html; charset=utf-8'); response.end(fixture); return; }
   const pathname = new URL(request.url, 'http://localhost').pathname;
-  if (/^\/studio\/(candy\.js|candy-utils\.js|theme-utils\.js|style\.css|candy\.css)$/.test(pathname)) {
+  if (/^\/studio\/(candy\.js|candy-utils\.js|candy-recolor\.js|theme-utils\.js|style\.css|candy\.css)$/.test(pathname)) {
     const file = join(root, pathname.slice('/studio/'.length));
     response.setHeader('Content-Type', file.endsWith('.css') ? 'text/css' : 'text/javascript');
     response.end(await readFile(file)); return;
@@ -61,3 +61,4 @@ try {
   if (!target.toLowerCase().startsWith((tempRoot + sep).toLowerCase()) || !target.split(sep).at(-1).startsWith('candy-browser-')) throw new Error('Unexpected browser profile path');
   await rm(target, { recursive: true, force: true });
 }
+

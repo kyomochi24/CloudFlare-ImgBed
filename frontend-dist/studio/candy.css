@@ -4,3 +4,67 @@
 .candy-start #candy-clear:disabled{opacity:.45;cursor:not-allowed}.candy-palette-trigger{background:#ffeaf2!important;color:#985372!important;border-color:#e8b8cc!important}.candy-palette{position:fixed;z-index:100;top:86px;right:18px;width:min(350px,calc(100vw - 16px));border:2px solid #dfa9c1;border-radius:18px;background:#fffdfa;box-shadow:0 14px 40px #76415c45;overflow:hidden}.candy-palette-handle{display:flex;align-items:center;gap:8px;padding:11px 13px;background:linear-gradient(110deg,#ffe3ee,#f4e9ff);color:#80516e;cursor:grab;touch-action:none;user-select:none}.candy-palette-handle:active{cursor:grabbing}.candy-palette-handle strong{font-size:14px;white-space:nowrap}.candy-palette-handle span{font-size:11px;margin-left:auto;white-space:nowrap}.candy-palette-handle button{border:0;border-radius:8px;background:#fff;color:#a95d7d;font-size:20px;line-height:1;width:27px;height:27px;cursor:pointer}.candy-palette-body{padding:13px 16px 17px}.candy-palette-body p{font-size:12px;color:#9f6482;margin:0 0 12px}.candy-palette-body label{display:grid;grid-template-columns:48px minmax(70px,1fr) 63px 12px;align-items:center;gap:7px;font-size:12px;font-weight:700;color:#8f5772;margin:11px 0}.candy-palette-body input[type=range]{width:100%;min-width:0;accent-color:#d980a6}.candy-palette-body input[type=number]{box-sizing:border-box;width:63px;min-width:0;padding:5px 3px;text-align:center;border:1px solid #dfb7c8;border-radius:8px;background:#fff;color:#754b64;font:inherit}.candy-palette-body output{color:#a97690}.candy-color-tools{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:12px 0}.candy-color-tools span{font-size:12px;color:#9a6a85}.candy-color-tools .hint{margin-left:auto}.candy-color-row{grid-template-columns:minmax(140px,1fr) minmax(150px,1fr) minmax(235px,1.5fr)}.candy-color-pick{display:flex;align-items:center;gap:8px;min-width:0}.candy-color-pick input{width:17px;height:17px;flex:none;accent-color:#7398df}.candy-color-pick span{font-size:12px;overflow-wrap:anywhere}.candy-color-edit{display:flex;align-items:center;flex-wrap:wrap;gap:6px}.candy-color-edit label{display:flex;align-items:center;gap:7px}.candy-color-edit button{padding:5px 7px;border:1px solid #e9bfd1;border-radius:8px;background:#fff6fa;color:#a45d7d;text-decoration:none;cursor:pointer;font-size:11px}.candy-color-edit button:hover{background:#ffe6f0}.candy-color-edit button:focus-visible,.candy-palette button:focus-visible{outline:2px solid #7398df;outline-offset:2px}
 @media(max-width:700px){.candy-palette{top:76px;right:8px;width:min(350px,calc(100vw - 16px))}.candy-color-row{grid-template-columns:1fr}.candy-color-row>span:first-child{grid-column:auto}.candy-color-edit{justify-content:flex-start}.candy-color-tools .hint{margin-left:0;width:100%}}
 .candy-palette{max-height:calc(100dvh - 16px);overflow-y:auto}.candy-map-status{min-height:1.3em;margin:0 0 7px;color:#94607e;font-size:12px}.candy-color-row.is-map-source{border-color:#9bb7e9;background:#f2f6ff}
+
+/* Selective color: compact controls, with secondary detail tucked away. */
+.candy-palette{width:min(360px,calc(100vw - 16px));border:1px solid #e8c7d5;box-shadow:0 16px 48px #76415c26;background:#fffdfb}
+.candy-palette-handle{background:#fff0f5;border-bottom:1px solid #f0dce4}
+.candy-mode-switch{display:flex;gap:4px;padding:4px;margin:0 0 16px;border-radius:12px;background:#f5edf1}
+.candy-mode-switch button{flex:1;border:0;border-radius:9px;padding:9px 8px;background:transparent;color:#987287;font:inherit;font-size:12px;cursor:pointer}
+.candy-mode-switch button[aria-pressed=true]{background:#fff;color:#86556e;box-shadow:0 2px 6px #76415c12;font-weight:700}
+.candy-mode-switch button:disabled{opacity:.5;cursor:default}
+.candy-color-pair{display:grid;grid-template-columns:1fr 18px 1fr;align-items:center;gap:9px;margin:12px 0}
+.candy-palette-body .candy-color-well{display:flex;flex-direction:column;gap:7px;margin:0;padding:11px 8px;border:1px solid #eddae3;border-radius:13px;background:#fff}
+.candy-color-well span{font-size:11px;font-weight:500}
+.candy-color-well input[type=color]{width:100%;height:43px;padding:0;border:0;border-radius:8px;background:none;cursor:pointer}
+.candy-color-well input[type=color]::-webkit-color-swatch-wrapper{padding:0}
+.candy-color-well input[type=color]::-webkit-color-swatch{border:0;border-radius:8px}
+.candy-color-well input[type=color]::-moz-color-swatch{border:0;border-radius:8px}
+.candy-color-well code{font:10px ui-monospace,Consolas,monospace;color:#9c7b8d}
+.candy-color-arrow{color:#b89aaa;text-align:center}
+.candy-source-actions{display:flex;gap:8px;margin:10px 0 17px}
+.candy-source-actions button{flex:1;padding:8px 7px;border:1px solid #e7d4df;border-radius:9px;background:#fff;color:#91627d;font:inherit;font-size:11px;cursor:pointer}
+.candy-source-actions button[aria-pressed=true]{background:#eaf5ee;border-color:#9cc8ad;color:#477958}
+.candy-palette-body .candy-range-label{grid-template-columns:62px minmax(70px,1fr) 37px;gap:7px;margin:12px 0 5px}
+.candy-range-label output{text-align:right;font-size:11px;font-weight:400}
+.candy-range-caption{display:flex;justify-content:space-between;padding-left:69px;color:#af91a1;font-size:10px}
+.candy-palette-body .candy-mask-toggle{display:flex;gap:7px;margin:16px 0 12px;font-size:12px;font-weight:500}
+.candy-mask-toggle input{width:15px;height:15px;margin:0;accent-color:#c780a1}
+.candy-recolor-details{border-top:1px solid #f0e3e9;padding-top:11px;margin:12px 0}
+.candy-recolor-details summary{color:#a17d91;font-size:11px;cursor:pointer}
+.candy-palette-body .candy-pick-hint{font-size:11px;line-height:1.6;margin:13px 0 5px;color:#799982}
+.candy-palette-body .candy-recolor-note{font-size:10px;line-height:1.5;margin:0;color:#b09aa5}
+.candy-side canvas{display:block;width:100%;height:180px;object-fit:contain;background:repeating-conic-gradient(#f4ecf0 0 25%,white 0 50%) 0 0/22px 22px;border-radius:8px}
+.candy-images.is-picking [data-before],.candy-image-list.is-picking [data-before]{cursor:crosshair;outline:2px dashed #90bea0;outline-offset:2px}
+.candy-image-status{font-size:11px;color:#a2788e;line-height:1.5;margin:8px 0 0}
+.candy-image-status:empty{display:none}
+.candy-palette :is(input,button,summary):focus-visible{outline:2px solid #88a8e6;outline-offset:3px}
+.candy-row-tools label:not(.drawer-button){white-space:nowrap;font-size:12px}
+.candy-row-tools input[type=checkbox]{width:15px;height:15px;margin:0;flex:none;accent-color:#c780a1}
+.candy-palette-body input[type=range]{appearance:none;background:transparent;padding:0;margin:0;height:18px}
+.candy-palette-body input[type=range]::-webkit-slider-runnable-track{height:5px;border-radius:9px;background:#efdae5}
+.candy-palette-body input[type=range]::-webkit-slider-thumb{appearance:none;width:14px;height:14px;border-radius:50%;margin-top:-4.5px;background:#ce86a6;border:2px solid #fff;box-shadow:0 1px 4px #b56d9140}
+.candy-palette-body input[type=range]::-moz-range-track{height:5px;border-radius:9px;background:#efdae5}
+.candy-palette-body input[type=range]::-moz-range-thumb{width:11px;height:11px;border-radius:50%;background:#ce86a6;border:2px solid #fff}
+@media(min-width:1100px){.candy-image-list.palette-open{padding-right:360px}}
+@media(max-width:700px){
+  .candy-side canvas{height:135px}
+  .candy-palette{top:auto;bottom:8px;right:8px}
+  .candy-palette-handle{padding:8px 12px}
+  .candy-palette-body{padding:10px 13px}
+  .candy-palette-body>p{margin-bottom:8px;font-size:11px}
+  .candy-mode-switch{margin-bottom:9px}
+  .candy-mode-switch button{padding:7px}
+  .candy-color-pair{margin:8px 0}
+  .candy-palette-body .candy-color-well{padding:7px;gap:4px}
+  .candy-color-well input[type=color]{height:25px;margin:0}
+  .candy-source-actions{margin:8px 0}
+  .candy-source-actions button{padding:7px}
+  .candy-palette-body .candy-mask-toggle{margin:10px 0}
+  .candy-recolor-details{padding-top:7px;margin:8px 0}
+  .candy-palette-body .candy-pick-hint{margin:8px 0 0;font-size:10px}
+  .candy-palette-body .candy-recolor-note{display:none}
+  .candy-palette.is-sampling .candy-palette-body>p,.candy-palette.is-sampling .candy-mode-switch{display:none}
+  .candy-palette.is-sampling #candy-selective-controls>*:not(.candy-source-actions):not(.candy-pick-hint){display:none}
+  .candy-palette.is-sampling #candy-pink-preset{display:none}
+}
+
