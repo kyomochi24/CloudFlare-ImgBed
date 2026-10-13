@@ -30,6 +30,13 @@ User exports preserve unknown theme fields. Preview-only settings are saved in `
 
 This package does not deploy or push changes to the original repository.
 
+## 2026-10-14 · Candy preview bridge
+
+- The Studio candy editor can open this same isolated preview runtime on demand. Its refresh button sends a snapshot of the current JSON/CSS and small PNG assets; slider changes never trigger whole-theme renders automatically.
+- The trusted parent sends PNG Blobs with unique preview-only keys. The child creates its own object URLs, replaces those keys in the snapshot, and releases prior assets after replacement. Arbitrary imported blob URLs remain rejected by the regular image URL helper.
+- Frame sandbox, per-load channel checks, CSP, escaped sample text and blocked API/form access are retained. Ordinary Workshop editing continues to work without an asset payload.
+- Corresponding source for the Studio bridge is included under integration/ in workshop-source.zip. User-facing exports continue to use the canonical upload flow and do not contain preview-only keys.
+
 
 ## 2026-10-05 · v2
 

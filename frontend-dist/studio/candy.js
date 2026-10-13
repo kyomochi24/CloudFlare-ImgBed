@@ -1,5 +1,6 @@
 import { colorRgb, exportTheme, inspectTheme, mapColor } from './candy-utils.js?v=20260923b';
 import { initProtectionEditor } from './candy-protection.js?v=20261014b';
+import { initCandyThemePreview } from './candy-theme-preview.js?v=20261014c';
 import { DEFAULT_RECOLOR, recolorCanvas, sampleColor } from './candy-recolor.js?v=20261014b';
 
 const $ = id => document.getElementById(id);
@@ -33,6 +34,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
   const selected = new Set();
   const selectedColors = new Set();
   const previewSources = new Map();
+  const themeAssets = new Map();
   let previewTimer, previewVersion = 0, picking = false;
   const visibleImages = new Set();
   const imageObserver = new IntersectionObserver(entries => {
@@ -43,17 +45,20 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
     schedulePreview();
   }, { rootMargin: '180px' });
   const status = message => { $('candy-status').textContent = message; };
+  const themePreview = initCandyThemePreview({buildSnapshot:buildThemeSnapshot,notice});
   const protector = initProtectionEditor({
     sourceFor: previewSource,
     onApply(item, index, strokes) {
       if (project?.images[index] !== item) return;
       item.protection = strokes; item.savedUrl = ''; item.keep = false;
+      themePreview.markDirty();
       updateProtectionButtons(); updatePreview();
       status('第 ' + (index + 1) + ' 张的保护区域已更新；其他图片没有更改。');
     },
     notice,
   });
   function release() {
+    themePreview.close(); themeAssets.clear();
     protector.close();
     previewVersion++; clearTimeout(previewTimer); picking = false;
     imageObserver.disconnect(); visibleImages.clear(); previewSources.clear();
@@ -170,6 +175,43 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
       return canvas;
     } finally { bitmap.close(); }
   }
+  async function buildThemeSnapshot(progress, isCurrent) {
+    if (!project) throw new Error('请先导入一份美化');
+    const raw = project.raw, title = $('candy-title').value.trim() || project.name;
+    const changes = new Map(Object.entries(project.changes).map(([index,hex])=>[Number(index),hex]));
+    // Snapshot settings now; preview processing never mutates the project or saved URLs.
+    const items = project.images.filter(item=>!item.keep&&edited(item)).map(item=>({
+      ...item,recolors:structuredClone(imageRules(item)),protection:structuredClone(item.protection||[]),
+    }));
+    const replacements = new Map(), assets = [];
+    for (const [index,item] of items.entries()) {
+      if(!isCurrent())return null;
+      progress('正在准备预览图片 ' + (index+1) + ' / ' + items.length + '…');
+      const key = item.override || item.url;
+      const settings = JSON.stringify([imageMode(item),item.hue,item.sat,item.light,item.recolors,item.protection]);
+      let blob = themeAssets.get(key)?.settings === settings ? themeAssets.get(key).blob : null;
+      if (!blob) {
+        const source = await previewSource(item);
+        if(!isCurrent())return null;
+        const canvas = document.createElement('canvas'), ratio = Math.min(1,512/Math.max(source.width,source.height));
+        canvas.width = Math.max(1,Math.round(source.width*ratio)); canvas.height = Math.max(1,Math.round(source.height*ratio));
+        const ctx = canvas.getContext('2d');
+        if(!ctx)throw new Error('浏览器无法创建预览画布');
+        if(imageMode(item)!=='selective'&&typeof ctx.filter!=='string'&&(item.hue!==0||item.sat!==100||item.light!==100))throw new Error('此浏览器不支持整图调色预览，请换用新版浏览器');
+        if(imageMode(item)!=='selective')ctx.filter=filter(item);
+        ctx.drawImage(source,0,0,canvas.width,canvas.height);
+        if(imageMode(item)==='selective')await recolorCanvas(canvas,item.recolors,{strokes:item.protection,yieldToUI:true});
+        blob = await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));canvas.width=0;canvas.height=0;
+        if(!blob)throw new Error('预览图片生成失败');
+        themeAssets.delete(key);themeAssets.set(key,{settings,blob});
+        while(themeAssets.size>24)themeAssets.delete(themeAssets.keys().next().value);
+      }
+      const token='https://qiuqiu-preview.invalid/'+crypto.randomUUID()+'.png';
+      replacements.set(item.url,token);assets.push({key:token,blob});
+    }
+    if(!isCurrent())return null;
+    return {theme:JSON.parse(exportTheme(raw,title,replacements,changes)),assets};
+  }
   async function renderSelectivePreviews(version) {
     const current = project; if (!current) return;
     for (const n of visibleImages) {
@@ -219,6 +261,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
     $('candy-color-selected-count').textContent = `已选 ${selectedColors.size} 处颜色`;
   }
   function render() {
+    themePreview.markDirty();
     activeRuleIndex = 0;
     $('candy-editor').classList.remove('hidden'); $('candy-title').value = project.name;
     $('candy-clear').disabled = false;
@@ -237,6 +280,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
       render();
     } catch (error) { notice(`美化 JSON 无法读取：${error.message}`, true); }
   }
+  $('candy-title').addEventListener('input',()=>themePreview.markDirty());
   $('candy-input').addEventListener('change', event => { load(event.target.files[0]); event.target.value = ''; });
   $('candy-drop').addEventListener('dragover', event => { event.preventDefault(); event.currentTarget.classList.add('dragging'); });
   $('candy-drop').addEventListener('dragleave', event => event.currentTarget.classList.remove('dragging'));
@@ -274,7 +318,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
   $('candy-images').addEventListener('change', event => {
     const target = event.target;
     if (target.dataset.pick !== undefined) { const n = Number(target.dataset.pick); target.checked ? selected.add(n) : selected.delete(n); updateSelection(); }
-    if (target.dataset.keep !== undefined) { const item = project.images[Number(target.dataset.keep)]; item.keep = target.checked; item.savedUrl = ''; updatePreview(); }
+    if (target.dataset.keep !== undefined) { const item = project.images[Number(target.dataset.keep)]; item.keep = target.checked; item.savedUrl = ''; updatePreview(); themePreview.markDirty(); }
     if (target.dataset.override !== undefined) {
       const file = target.files[0], item = project.images[Number(target.dataset.override)];
       if (!file) return;
@@ -282,6 +326,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
       if (item.overrideUrl) URL.revokeObjectURL(item.overrideUrl);
       item.override = file; item.overrideUrl = URL.createObjectURL(file); item.keep = false; item.savedUrl = '';
       item.protection = [];
+      themePreview.markDirty();
       renderImages(); status(`第 ${Number(target.dataset.override) + 1} 张已换成你上传的手改图。`);
     }
   });
@@ -296,6 +341,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
       const item = project.images[Number(button.dataset.reset)];
       if (item.overrideUrl) URL.revokeObjectURL(item.overrideUrl);
       Object.assign(item, { hue: 0, sat: 100, light: 100, mode: 'global', recolor: { ...DEFAULT_RECOLOR }, recolors: [], protection: [], override: null, overrideUrl: '', keep: false, savedUrl: '' }); renderImages();
+      themePreview.markDirty();
     }
     if (button.dataset.download !== undefined) try { await downloadOriginal(Number(button.dataset.download)); } catch (error) { notice(error.message, true); }
     if (button.dataset.saveOriginal !== undefined) {
@@ -311,7 +357,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
   });
   $('candy-select-all').addEventListener('click', () => { project?.images.forEach((_, i) => selected.add(i)); renderImages(); });
   $('candy-select-none').addEventListener('click', () => { selected.clear(); renderImages(); });
-  $('candy-reset-selected').addEventListener('click', () => { for (const n of selected) { const item = project.images[n]; if (item.overrideUrl) URL.revokeObjectURL(item.overrideUrl); Object.assign(item, { hue: 0, sat: 100, light: 100, mode: 'global', recolor: { ...DEFAULT_RECOLOR }, recolors: [], protection: [], override: null, overrideUrl: '', keep: false, savedUrl: '' }); } renderImages(); });
+  $('candy-reset-selected').addEventListener('click', () => { for (const n of selected) { const item = project.images[n]; if (item.overrideUrl) URL.revokeObjectURL(item.overrideUrl); Object.assign(item, { hue: 0, sat: 100, light: 100, mode: 'global', recolor: { ...DEFAULT_RECOLOR }, recolors: [], protection: [], override: null, overrideUrl: '', keep: false, savedUrl: '' }); } renderImages(); themePreview.markDirty(); });
   $('candy-palette-open').addEventListener('click', () => showPalette($('candy-palette').classList.contains('hidden')));
   $('candy-palette-close').addEventListener('click', () => showPalette(false));
   function updateSummaries() {
@@ -342,7 +388,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
       item.mode = button.dataset.candyMode; item.recolor ||= { ...DEFAULT_RECOLOR };
       item.keep = false; item.savedUrl = '';
     }
-    syncPalette(); updateSummaries(); updatePreview();
+    syncPalette(); updateSummaries(); updatePreview(); themePreview.markDirty();
   }));
   function changeRule(change) {
     if (!project || !selected.size || busy) return;
@@ -357,6 +403,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
       item.mode = 'selective'; item.recolors = structuredClone(rules); item.recolor = { ...rules[0] }; item.keep = false; item.savedUrl = '';
     }
     syncPalette(); updateSummaries(); updatePreview();
+    themePreview.markDirty();
   }
   $('candy-rule-add').addEventListener('click', () => {
     if (!project || !selected.size || busy) return;
@@ -459,6 +506,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
       if (!project || !selected.size) return status('先选中一张或多张图片再调色。');
       for (const n of selected) { const item = project.images[n]; item[key] = next; item.savedUrl = ''; item.keep = false; }
       updatePreview();
+      themePreview.markDirty();
       $('candy-images').querySelectorAll('[data-image-row]').forEach(row => {
         const n = Number(row.dataset.imageRow);
         if (selected.has(n)) row.querySelector('.candy-row-top small:last-child').textContent = imageSummary(project.images[n]);
@@ -480,6 +528,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
     const input = event.target.closest('[data-color]'); if (!input || !project) return;
     const n = Number(input.dataset.color), row = input.closest('.candy-color-row');
     project.changes[n] = input.value; row.querySelector('code').textContent = `RGB(${colorRgb(input.value)})`;
+    themePreview.markDirty();
   });
   $('candy-colors').addEventListener('click', event => {
     const button = event.target.closest('button'); if (!button || !project) return;
@@ -490,12 +539,14 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
       if (!targets.length) return notice('请先勾选至少一处其他颜色作为映射目标', true);
       for (const i of targets) project.changes[i] = mapColor(project.colors[i].hex, before, after);
       mappedFrom = n; renderColors();
+      themePreview.markDirty();
       const message = `已按第 ${n + 1} 处 A → B 的变化，映射 ${targets.length} 处所选颜色。原色和未勾选的颜色没有更改。`;
       $('candy-map-status').textContent = message; status(message);
     }
     if (button.dataset.colorReset !== undefined) {
       const n = Number(button.dataset.colorReset), row = button.closest('.candy-color-row');
       delete project.changes[n]; row.querySelector('input[type=color]').value = project.colors[n].hex;
+      themePreview.markDirty();
       row.querySelector('code').textContent = `RGB(${colorRgb(project.colors[n].hex)})`;
     }
   });

@@ -3,15 +3,34 @@
 const $=id=>document.getElementById(id), channel=document.documentElement.dataset.channel;
 const tell=(type,data={})=>parent.postMessage({source:'qiuqiu-preview',channel,type,...data},'*');
 let lastSample='',inspect=false;
+let temporaryUrls=new Set();
+function previewTheme(data){
+ const assets=data.assets||[],replacements=new Map(),nextUrls=new Set();
+ try{
+  for(const asset of assets){
+   if(typeof asset.key!=='string'||!asset.key.startsWith('https://qiuqiu-preview.invalid/')||!(asset.blob instanceof Blob)||asset.blob.type!=='image/png')throw new Error('预览素材格式有误');
+   const generated=URL.createObjectURL(asset.blob);nextUrls.add(generated);replacements.set(asset.key,generated);
+  }
+  const walk=value=>{
+   if(typeof value==='string'){for(const [key,url] of replacements)value=value.split(key).join(url);return value;}
+   if(Array.isArray(value))return value.map(walk);
+   if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([key,child])=>[key,walk(child)]));
+   return value;
+  };
+  const theme=walk(data.theme||{}),oldUrls=temporaryUrls;temporaryUrls=nextUrls;
+  setTimeout(()=>{for(const url of oldUrls)URL.revokeObjectURL(url);},1000);
+  return theme;
+ }catch(error){for(const url of nextUrls)URL.revokeObjectURL(url);throw error;}
+}
 const inspector=createWorkshopInspector(tell);
 const colors={main_text_color:'--SmartThemeBodyColor',italics_text_color:'--SmartThemeEmColor',underline_text_color:'--SmartThemeUnderlineColor',quote_text_color:'--SmartThemeQuoteColor',blur_tint_color:'--SmartThemeBlurTintColor',chat_tint_color:'--SmartThemeChatTintColor',user_mes_blur_tint_color:'--SmartThemeUserMesBlurTintColor',bot_mes_blur_tint_color:'--SmartThemeBotMesBlurTintColor',shadow_color:'--SmartThemeShadowColor',border_color:'--SmartThemeBorderColor'};
 const classes={fast_ui_mode:'no-blur',noShadows:'noShadows',waifuMode:'waifuMode',hideChatAvatars_enabled:'hideChatAvatars',expand_message_actions:'expandMessageActions',reduced_motion:'reduced-motion',show_swipe_num_all_messages:'swipeAllMessages'};
 function escape(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function formatted(raw){const blocks=[];let s=escape(raw).replace(/```[^\n]*\n([\s\S]*?)```/g,(_,c)=>{blocks.push('<pre><code>'+c+'</code></pre>');return '\n\n@@CODE'+(blocks.length-1)+'@@\n\n'});s=s.replace(/&lt;u&gt;([\s\S]*?)&lt;\/u&gt;/g,'<u>$1</u>').replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>').replace(/\*([^*\n]+)\*/g,'<em>$1</em>').replace(/`([^`\n]+)`/g,'<code>$1</code>');return s.split(/\n\s*\n/).map(x=>{if(/^@@CODE\d+@@$/.test(x))return blocks[+x.match(/\d+/)[0]]||'<p>'+x+'</p>';if(/^---+$/.test(x.trim()))return '<hr>';if(x.startsWith('&gt;'))return '<blockquote><p>'+x.replace(/^&gt; ?/gm,'').replace(/\n/g,'<br>')+'</p></blockquote>';return '<p>'+x.replace(/\n/g,'<br>')+'</p>'}).join('')}
 function placeholder(user){const bg=user?'#cfdee5':'#e8bdc7',fg=user?'#638597':'#a1647b';const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><rect width="120" height="120" fill="${bg}"/><circle cx="60" cy="44" r="23" fill="${fg}"/><ellipse cx="60" cy="114" rx="44" ry="39" fill="${fg}"/><circle cx="52" cy="42" r="2" fill="white"/><circle cx="68" cy="42" r="2" fill="white"/></svg>`;return 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg)}
-function url(s){if(!s)return '';if(/^data:image\/(png|jpeg|gif|webp|avif|bmp);base64,/i.test(s))return s;try{const u=new URL(s);return ['http:','https:'].includes(u.protocol)?u.href:''}catch{return ''}}
+function url(s){if(!s)return '';if(temporaryUrls.has(s))return s;if(/^data:image\/(png|jpeg|gif|webp|avif|bmp);base64,/i.test(s))return s;try{const u=new URL(s);return ['http:','https:'].includes(u.protocol)?u.href:''}catch{return ''}}
 function renderMessages(s){const chat=$('chat'),oldScroll=chat.scrollTop;chat.replaceChildren();let id=0;for(let group=0;group<Math.min(4,Math.max(1,Number(s.count)||2));group++){for(const user of [true,false]){const m=$('message_template').content.firstElementChild.cloneNode(true);m.setAttribute('mesid',String(id));m.setAttribute('is_user',String(user));m.setAttribute('is_system','false');const name=(user?s.userName:s.charName)|| (user?'你':'角色');m.setAttribute('ch_name',name);m.querySelector('.name_text').textContent=name;const avatar=m.querySelector('.avatar img');avatar.src=url(user?s.userAvatar:s.charAvatar)||placeholder(user);avatar.alt=name;avatar.referrerPolicy='no-referrer';avatar.addEventListener('error',()=>{if(!avatar.src.startsWith('data:')){avatar.src=placeholder(user);tell('warning',{message:'有一张头像无法加载，已使用示例头像。'});}});m.querySelector('.mesIDDisplay').textContent='#'+id;m.querySelector('.mes_timer').textContent=user?'':'2.4s';m.querySelector('.tokenCounterDisplay').textContent=user?'36t':'128t';m.querySelector('.timestamp').textContent='2026-10-04 19:52';m.querySelector('.mes_text').innerHTML=formatted(user?s.userText:s.charText);m.querySelector('.swipes-counter').textContent='1/3';m.dataset.raw=user?s.userText:s.charText;chat.append(m);id++}}chat.lastElementChild?.classList.add('last_mes');chat.scrollTop=oldScroll}
-function apply(data){const t=data.theme||{},s=data.sample||{},root=document.documentElement.style;for(const [key,prop] of Object.entries(colors)){root.removeProperty(prop);if(typeof t[key]==='string'&&CSS.supports('color',t[key]))root.setProperty(prop,t[key])}
+function apply(data){const t=previewTheme(data),s=data.sample||{},root=document.documentElement.style;for(const [key,prop] of Object.entries(colors)){root.removeProperty(prop);if(typeof t[key]==='string'&&CSS.supports('color',t[key]))root.setProperty(prop,t[key])}
 for(const [key,prop,min,max,fallback,unit] of [['font_scale','--fontScale',.5,2,1,''],['chat_width','--sheldWidth',25,100,100,'vw'],['blur_strength','--blurStrength',0,100,10,''],['shadow_width','--shadowWidth',0,20,2,'']]){const n=Number(t[key]);root.setProperty(prop,(Number.isFinite(n)?Math.max(min,Math.min(max,n)):fallback)+unit)}
 for(const [k,c] of Object.entries(classes))document.body.classList.toggle(c,!!t[k]);for(const [k,c] of [['timer_enabled','no-timer'],['timestamps_enabled','no-timestamps'],['mesIDDisplay_enabled','no-mesIDDisplay'],['message_token_count_enabled','no-tokenCount']])document.body.classList.toggle(c,t[k]===false);
 document.body.classList.toggle('bubblechat',+t.chat_display===1);document.body.classList.toggle('documentstyle',+t.chat_display===2);for(const [n,c] of [[1,'big-avatars'],[2,'square-avatars'],[3,'rounded-avatars']])document.body.classList.toggle(c,+t.avatar_style===n);$('send_form').classList.toggle('compact',!!t.compact_input_area);document.body.classList.toggle('workshop-generating',!!s.generating);
@@ -23,4 +42,3 @@ document.addEventListener('click',e=>{if(inspect){e.preventDefault();e.stopPropa
 $('send_textarea').addEventListener('input',e=>{e.target.style.height='auto';e.target.style.height=Math.min(220,e.target.scrollHeight)+'px'});
 document.addEventListener('submit',e=>e.preventDefault());window.addEventListener('message',e=>{if(e.source!==parent||e.data?.channel!==channel)return;const d=e.data;if(d.type==='render'){try{apply(d)}catch(err){tell('error',{message:err.message})}}if(d.type==='inspect'){inspect=!!d.enabled;inspector.setEnabled(inspect)}inspector.message(d);});window.addEventListener('resize',()=>tell('viewport',{width:innerWidth,height:innerHeight}));tell('ready');
 })();
-
