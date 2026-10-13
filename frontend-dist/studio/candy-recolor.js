@@ -37,22 +37,84 @@ export function sampleColor(data, width, height, x, y) {
   return '#' + rgb.map(v => v.toString(16).padStart(2, '0')).join('');
 }
 
-export function createRecolorTransform(rule = DEFAULT_RECOLOR, mask = false) {
-  const [sourceHue, sourceSat] = hexToHsl(rule.source);
-  const [targetHue, targetSat] = hexToHsl(rule.target);
-  const range = clamp(Number(rule.range) || 30, 5, 85);
-  const softness = clamp(Number(rule.softness) / 100);
-  const inner = range * (1 - .95 * softness);
-  const hueDelta = ((targetHue - sourceHue + 540) % 360) - 180;
-  const minSat = Math.min(.12, Math.max(.025, sourceSat * .18));
+export function protectionAt(protection, x, y) {
+  if (!protection) return 0;
+  const { width, height, data } = protection;
+  x = clamp(x, 0, width - 1); y = clamp(y, 0, height - 1);
+  const x0 = Math.floor(x), y0 = Math.floor(y), x1 = Math.min(width - 1, x0 + 1), y1 = Math.min(height - 1, y0 + 1);
+  const dx = x - x0, dy = y - y0;
+  return ((data[y0 * width + x0] * (1 - dx) + data[y0 * width + x1] * dx) * (1 - dy) +
+    (data[y1 * width + x0] * (1 - dx) + data[y1 * width + x1] * dx) * dy) / 255;
+}
+
+export function drawProtectionMask(canvas, strokes = []) {
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#fff'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const stroke of strokes) {
+    if (!Array.isArray(stroke.points) || !stroke.points.length) continue;
+    ctx.globalCompositeOperation = stroke.tool === 'erase' ? 'destination-out' : 'source-over';
+    const diameter = clamp(Number(stroke.size) || .08, .01, .5) * Math.min(canvas.width, canvas.height);
+    const point = p => [clamp(p[0]) * canvas.width, clamp(p[1]) * canvas.height];
+    const [x, y] = point(stroke.points[0]);
+    ctx.lineWidth = diameter;
+    ctx.beginPath(); ctx.arc(x, y, diameter / 2, 0, Math.PI * 2); ctx.fill();
+    if (stroke.points.length > 1) {
+      ctx.beginPath(); ctx.moveTo(x, y);
+      for (const p of stroke.points.slice(1)) ctx.lineTo(...point(p));
+      ctx.stroke();
+    }
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  return canvas;
+}
+
+function rasterizeProtection(width, height, strokes) {
+  if (!strokes?.length) return null;
+  // The small alpha mask keeps large PNG exports within a reasonable memory budget.
+  // Vector strokes are normalized, so preview and export cover the same image region.
+  const ratio = Math.min(1, 1024 / Math.max(width, height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(width * ratio)); canvas.height = Math.max(1, Math.round(height * ratio));
+  drawProtectionMask(canvas, strokes);
+  const rgba = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+  const data = new Uint8Array(canvas.width * canvas.height);
+  for (let i = 0; i < data.length; i++) data[i] = rgba[i * 4 + 3];
+  const protection = { width: canvas.width, height: canvas.height, data };
+  canvas.width = 0; canvas.height = 0;
+  return protection;
+}
+
+export function createRecolorTransform(rule = DEFAULT_RECOLOR, mask = false, { protection = null, width, height } = {}) {
+  const rules = (Array.isArray(rule) ? rule : [rule]).map(value => {
+    const [sourceHue, sourceSat] = hexToHsl(value.source);
+    const [targetHue, targetSat] = hexToHsl(value.target), range = clamp(Number(value.range) || 30, 5, 85);
+    const softness = clamp(Number(value.softness) / 100);
+    return {sourceHue,sourceSat,targetSat,range,softness,inner:range*(1-.95*softness),
+      hueDelta:((targetHue-sourceHue+540)%360)-180,minSat:Math.min(.12,Math.max(.025,sourceSat*.18))};
+  });
   return (data, start = 0, end = data.length) => {
     for (let i = start; i < end; i += 4) {
       if (!data[i + 3]) continue;
       const r = data[i], g = data[i + 1], b = data[i + 2];
       const [h, s, l] = rgbToHsl(r, g, b);
-      const distance = Math.abs(((h - sourceHue + 540) % 360) - 180);
-      const hueWeight = softness === 0 ? Number(distance <= range) : 1 - smooth(inner, range, distance);
-      const weight = sourceSat < .04 ? 0 : hueWeight * smooth(minSat, minSat * 2, s) * smooth(0, .02, l) * (1 - smooth(.97, 1, l));
+      // Match every rule against the ORIGINAL pixel. A pink -> blue result must not
+      // be caught again by a separate blue -> green rule.
+      let chosen = null, match = 0, nearest = Infinity;
+      for (const settings of rules) {
+        const {sourceHue,sourceSat,range,softness,inner,minSat} = settings;
+        const distance = Math.abs(((h - sourceHue + 540) % 360) - 180);
+        const hueWeight = softness === 0 ? Number(distance <= range) : 1 - smooth(inner, range, distance);
+        const amount = sourceSat < .04 ? 0 : hueWeight * smooth(minSat,minSat*2,s);
+        if (amount > match || (amount > 0 && amount === match && distance < nearest)) {
+          chosen = settings; match = amount; nearest = distance;
+        }
+      }
+      const pixel = i / 4;
+      const protectedAmount = protection ? protectionAt(protection,
+        (pixel % width + .5) * protection.width / width - .5,
+        (Math.floor(pixel / width) + .5) * protection.height / height - .5) : 0;
+      const weight = (1 - protectedAmount) * match * smooth(0, .02, l) * (1 - smooth(.97, 1, l));
       if (mask) {
         const gray = .2126 * r + .7152 * g + .0722 * b;
         data[i] = gray * (1 - weight) + 243 * weight;
@@ -60,7 +122,7 @@ export function createRecolorTransform(rule = DEFAULT_RECOLOR, mask = false) {
         data[i + 2] = gray * (1 - weight) + 162 * weight;
       } else if (weight > 0) {
         // Retain the original lightness, texture and variation within the chosen color family.
-        const changed = hslToRgb(h + hueDelta, clamp(s + targetSat - sourceSat), l);
+        const changed = hslToRgb(h + chosen.hueDelta, clamp(s + chosen.targetSat - chosen.sourceSat), l);
         data[i] = r + (changed[0] - r) * weight;
         data[i + 1] = g + (changed[1] - g) * weight;
         data[i + 2] = b + (changed[2] - b) * weight;
@@ -70,11 +132,12 @@ export function createRecolorTransform(rule = DEFAULT_RECOLOR, mask = false) {
   };
 }
 
-export async function recolorCanvas(canvas, rule, { mask = false, yieldToUI = false } = {}) {
+export async function recolorCanvas(canvas, rule, { mask = false, yieldToUI = false, strokes = [] } = {}) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('浏览器无法创建画布');
   const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const transform = createRecolorTransform(rule, mask);
+  const protection = rasterizeProtection(canvas.width, canvas.height, strokes);
+  const transform = createRecolorTransform(rule, mask, { protection, width: canvas.width, height: canvas.height });
   const chunk = 4 * 131072;
   for (let start = 0; start < frame.data.length; start += chunk) {
     transform(frame.data, start, Math.min(start + chunk, frame.data.length));

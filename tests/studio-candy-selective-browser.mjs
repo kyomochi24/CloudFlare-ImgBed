@@ -39,6 +39,8 @@ export async function startFixture() {
   const source = await readFile(join(root, 'index.html'), 'utf8');
   const section = source.match(/<section class="card candy-card">[\s\S]*?<\/section>/)?.[0];
   assert.ok(section);
+  const protectionDialog = source.match(/<dialog id="candy-protection-dialog"[\s\S]*?<\/dialog>/)?.[0];
+  assert.ok(protectionDialog);
   const png = fixturePng();
   const setup = `
 import { initCandy } from '/studio/candy.js';
@@ -119,9 +121,9 @@ try {
     if (path === '/fixture.png' || path === '/fixture2.png') { response.setHeader('Content-Type','image/png'); response.end(png); return; }
     if (path === '/smoke' || path === '/preview') {
       response.setHeader('Content-Type','text/html; charset=utf-8');
-      response.end(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/studio/style.css"><link rel="stylesheet" href="/studio/candy.css"><body><main class="shell" style="padding-top:32px"><div class="section-heading"><span>COLOR CANDY BOX</span><h2>丘丘糖果色匣 ✿</h2><p>给喜欢的颜色，换一种心情。</p></div><div id="notice" role="status"></div>${section}</main><script type="module">${setup}${path==='/smoke'?checks:''}</script></body></html>`);return;
+      response.end(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/studio/style.css"><link rel="stylesheet" href="/studio/candy.css"><body><main class="shell" style="padding-top:32px"><div class="section-heading"><span>COLOR CANDY BOX</span><h2>丘丘糖果色匣 ✿</h2><p>给喜欢的颜色，换一种心情。</p></div><div id="notice" role="status"></div>${section}</main>${protectionDialog}<script type="module">${setup}${path==='/smoke'?checks:''}</script></body></html>`);return;
     }
-    if (/^\/studio\/(candy\.js|candy-utils\.js|candy-recolor\.js|theme-utils\.js|style\.css|candy\.css)$/.test(path)) {
+    if (/^\/studio\/(candy\.js|candy-utils\.js|candy-recolor\.js|candy-protection\.js|theme-utils\.js|style\.css|candy\.css)$/.test(path)) {
       response.setHeader('Content-Type',path.endsWith('.css')?'text/css':'text/javascript');
       response.end(await readFile(join(root,path.slice('/studio/'.length))));return;
     }

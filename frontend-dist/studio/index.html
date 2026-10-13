@@ -9,8 +9,8 @@
   <title>浅浅丘的甜品屋 · 把喜欢的图片好好收藏</title>
   <link rel="stylesheet" href="/studio/style.css?v=20260925a">
   <link rel="stylesheet" href="/studio/tools.css?v=20260928-font3">
-  <link rel="stylesheet" href="/studio/candy.css?v=20261014a">
-  <script src="/studio/app.js?v=20261014a" type="module"></script>
+  <link rel="stylesheet" href="/studio/candy.css?v=20261014b">
+  <script src="/studio/app.js?v=20261014b" type="module"></script>
 </head>
 <body>
   <picture class="site-wallpaper" aria-hidden="true"><source media="(max-width: 820px)" srcset="https://771553.xyz/file/1790000025921_9c1668d8be042af7b0d0fdea1b4c1c20.jpg"><img src="https://771553.xyz/file/1789999968170_%E5%BE%AE%E4%BF%A1%E5%9B%BE%E7%89%87_20260921221136_547_164.jpg" alt="" referrerpolicy="no-referrer"></picture>
@@ -67,6 +67,8 @@
                 <label>亮度 <input id="candy-light" type="range" min="0" max="200" value="100"><input id="candy-light-number" type="number" min="0" max="200" step="1" value="100" aria-label="亮度数值"><output id="candy-light-value">%</output></label>
               </div>
               <div id="candy-selective-controls" class="hidden">
+                <div class="candy-rule-head"><span>换色规则</span><button id="candy-rule-add" type="button">＋ 添加</button></div>
+                <div id="candy-rules" class="candy-rule-list" aria-label="换色规则列表"></div>
                 <div class="candy-color-pair">
                   <label class="candy-color-well"><span>原来的颜色</span><input id="candy-recolor-source" type="color" value="#ed8fb6" aria-label="需要替换的原色"><code id="candy-source-hex">#ED8FB6</code></label>
                   <span class="candy-color-arrow" aria-hidden="true">→</span>
@@ -76,9 +78,10 @@
                 <label class="candy-range-label" for="candy-recolor-range">颜色范围 <input id="candy-recolor-range" type="range" min="5" max="85" value="30"><output id="candy-recolor-range-value">30°</output></label>
                 <div class="candy-range-caption"><span>更精准</span><span>包含更多相近色</span></div>
                 <label class="candy-mask-toggle"><input id="candy-show-mask" type="checkbox">查看改色范围</label>
+                <button id="candy-protection-open" class="candy-protection-trigger" type="button">✎ 保护区域</button>
                 <details class="candy-recolor-details"><summary>过渡细节</summary><label class="candy-range-label" for="candy-recolor-softness">柔和度 <input id="candy-recolor-softness" type="range" min="0" max="100" value="50"><output id="candy-recolor-softness-value">50%</output></label></details>
                 <p id="candy-pick-hint" class="candy-pick-hint" role="status" aria-live="polite">只改相近色，保留原图明暗与透明度。</p>
-                <p class="candy-recolor-note">同色区域会一起变化；浅色深色各自保留层次。</p>
+                <p class="candy-recolor-note">最多 6 条，按原图颜色换色。保护画笔可以保留不想改的部分。</p>
               </div>
             </div>
           </aside>
@@ -95,6 +98,24 @@
   <dialog id="album-dialog"><form method="dialog" id="album-form" class="dialog-content"><button class="close" value="cancel" aria-label="关闭">×</button><div class="card-kicker">NEW ALBUM</div><h2>给新相册起个名字 ✿</h2><label>相册名称<input id="album-name" maxlength="80" required placeholder="比如：像素甜点屋的小图片"></label><button class="button primary" value="create">创建相册 →</button></form></dialog>
   <dialog id="rename-dialog"><form id="rename-form" class="dialog-content"><button class="close" id="close-rename" type="button" aria-label="关闭">×</button><div class="card-kicker">RENAME FILE</div><h2>给文件起个名字 ✿</h2><label>文件名称<input id="rename-name" maxlength="100" required placeholder="例如：像素甜点屋.png"></label><p class="hint">只更改显示名称，原图链保持不变。</p><button class="button primary" type="submit">保存名称 →</button></form></dialog>
   <dialog id="announcement-dialog" class="announcement-dialog" aria-labelledby="announcement-title"><button id="announcement-close" class="close" type="button" aria-label="关闭公告">×</button><div class="card-kicker">SWEET NEWS ✉</div><h2 id="announcement-title">暂时没有公告 ✿</h2><div id="announcement-content" class="announcement-content">站长还没有发布新公告。</div><div id="announcement-images" class="announcement-images"></div><button id="announcement-done" class="button secondary" type="button">看完啦，关掉 ♡</button></dialog>
+
+  <dialog id="candy-protection-dialog" class="candy-protection-dialog" aria-labelledby="candy-protection-title">
+    <div class="candy-protection-head"><div><span>KEEP A LITTLE COLOR ♡</span><h2 id="candy-protection-title">保护图片里的颜色</h2></div><button id="candy-protection-close" type="button" aria-label="取消并关闭保护编辑">×</button></div>
+    <div class="candy-protection-content">
+      <div class="candy-protection-toolbar">
+        <div class="candy-protection-tools" role="group" aria-label="保护画笔工具"><button type="button" data-protection-tool="protect" aria-pressed="true">✎ 保护画笔</button><button type="button" data-protection-tool="erase" aria-pressed="false">擦除</button></div>
+        <label class="candy-protection-size">笔刷大小<input id="candy-protection-size" type="range" min="2" max="30" value="8"><output id="candy-protection-size-value">8%</output></label>
+        <div class="candy-protection-history"><button id="candy-protection-undo" type="button" disabled>↶ 撤销</button><button id="candy-protection-clear" type="button" disabled>清空</button></div>
+      </div>
+      <p id="candy-protection-hint" class="candy-protection-hint" role="status">在左侧涂抹要保留原色的部分，右侧查看结果。</p>
+      <div class="candy-protection-grid">
+        <div class="candy-protection-side"><strong>原图 · 紫色区域受到保护</strong><div class="candy-protection-stage"><canvas id="candy-protection-original" aria-label="原图"></canvas><canvas id="candy-protection-overlay" aria-label="在原图上涂抹保护区域"></canvas><span id="candy-protection-cursor" class="candy-brush-cursor" aria-hidden="true" hidden></span></div></div>
+        <div class="candy-protection-side"><strong>改色结果 · 实时预览</strong><div class="candy-protection-stage"><canvas id="candy-protection-after" role="img" aria-label="应用保护后的换色预览"></canvas></div></div>
+      </div>
+      <div class="candy-protection-footer"><small>只保护当前这张图，完成后会随草稿保存。</small><button id="candy-protection-cancel" type="button">取消</button><button id="candy-protection-save" class="candy-protection-save" type="button">完成保护 ♡</button></div>
+    </div>
+  </dialog>
+
 </body>
 </html>
 

@@ -1,5 +1,6 @@
 import { colorRgb, exportTheme, inspectTheme, mapColor } from './candy-utils.js?v=20260923b';
-import { DEFAULT_RECOLOR, recolorCanvas, sampleColor } from './candy-recolor.js?v=20261014a';
+import { initProtectionEditor } from './candy-protection.js?v=20261014b';
+import { DEFAULT_RECOLOR, recolorCanvas, sampleColor } from './candy-recolor.js?v=20261014b';
 
 const $ = id => document.getElementById(id);
 const safe = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
@@ -21,12 +22,14 @@ async function drafts(mode, callback) {
 }
 const waitImage = blob => createImageBitmap(blob);
 const filter = item => `hue-rotate(${item.hue}deg) saturate(${item.sat}%) brightness(${item.light}%)`;
-const edited = item => !!item.override || (item.mode === 'selective' ? item.recolor.source !== item.recolor.target : item.hue !== 0 || item.sat !== 100 || item.light !== 100);
+const imageRules = item => item.recolors?.length ? item.recolors : [{ ...(item.recolor || DEFAULT_RECOLOR) }];
+const edited = item => !!item.override || (item.mode === 'selective' ? imageRules(item).some(rule => rule.source !== rule.target) : item.hue !== 0 || item.sat !== 100 || item.light !== 100);
 const shortName = (name, index) => `${String(name || '糖果色').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(0, 58)}-${index + 1}.png`;
 
 export function initCandy({ api, state, refreshProfile, refreshAlbums, notice }) {
   let project = null, busy = false;
   let mappedFrom = -1;
+  let activeRuleIndex = 0;
   const selected = new Set();
   const selectedColors = new Set();
   const previewSources = new Map();
@@ -40,7 +43,18 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
     schedulePreview();
   }, { rootMargin: '180px' });
   const status = message => { $('candy-status').textContent = message; };
+  const protector = initProtectionEditor({
+    sourceFor: previewSource,
+    onApply(item, index, strokes) {
+      if (project?.images[index] !== item) return;
+      item.protection = strokes; item.savedUrl = ''; item.keep = false;
+      updateProtectionButtons(); updatePreview();
+      status('第 ' + (index + 1) + ' 张的保护区域已更新；其他图片没有更改。');
+    },
+    notice,
+  });
   function release() {
+    protector.close();
     previewVersion++; clearTimeout(previewTimer); picking = false;
     imageObserver.disconnect(); visibleImages.clear(); previewSources.clear();
     for (const item of project?.images || []) if (item.overrideUrl) URL.revokeObjectURL(item.overrideUrl);
@@ -67,17 +81,24 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
       button.setAttribute('aria-pressed', String(button.dataset.candyMode === mode));
       button.disabled = !first;
     });
-    const rule = first?.recolor || DEFAULT_RECOLOR;
+    const rules = first ? imageRules(first) : [DEFAULT_RECOLOR];
+    activeRuleIndex = Math.min(activeRuleIndex, rules.length - 1);
+    const rule = rules[activeRuleIndex];
+    $('candy-rule-add').disabled = !first || rules.length >= 6;
+    $('candy-rules').innerHTML = rules.map((rule, index) => `<div class="candy-rule-row"><button type="button" data-rule-pick="${index}" aria-pressed="${index === activeRuleIndex}" aria-label="编辑第 ${index + 1} 条换色规则"><span>${index + 1}</span><i style="background:${safe(rule.source)}"></i><span>→</span><i style="background:${safe(rule.target)}"></i><small>${index === activeRuleIndex ? '正在调整' : '点击调整'}</small></button><button type="button" data-rule-delete="${index}" ${rules.length === 1 ? 'disabled' : ''} aria-label="删除第 ${index + 1} 条换色规则">×</button></div>`).join('');
     for (const key of ['source', 'target', 'range', 'softness']) $('candy-recolor-' + key).value = rule[key];
     $('candy-recolor-range-value').textContent = rule.range + '°';
     $('candy-recolor-softness-value').textContent = rule.softness + '%';
     $('candy-source-hex').textContent = rule.source.toUpperCase();
     $('candy-target-hex').textContent = rule.target.toUpperCase();
     $('candy-show-mask').disabled = mode !== 'selective' || !first;
+    $('candy-protection-open').disabled = mode !== 'selective' || !first || first.keep;
+    $('candy-protection-open').textContent = first?.protection?.length ? '✎ 编辑保护区域' : '✎ 保护区域';
     if (mode !== 'selective') { $('candy-show-mask').checked = false; setPicking(false); }
   }
   function imageSummary(item) {
-    return imageMode(item) === 'selective' ? `指定颜色 ${item.recolor.source.toUpperCase()} → ${item.recolor.target.toUpperCase()}` : `色相 ${item.hue}° · 饱和度 ${item.sat}% · 亮度 ${item.light}%`;
+    const rules = imageRules(item);
+    return imageMode(item) === 'selective' ? (rules.length > 1 ? `指定颜色 · ${rules.length} 条换色规则` : `指定颜色 ${rules[0].source.toUpperCase()} → ${rules[0].target.toUpperCase()}`) : `色相 ${item.hue}° · 饱和度 ${item.sat}% · 亮度 ${item.light}%`;
   }
   async function refreshQuota() {
     if (!state.user) return;
@@ -124,6 +145,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
         img.closest('[data-image-row]').querySelector('.candy-image-status').textContent = '';
       }
     });
+    updateProtectionButtons();
     schedulePreview();
   }
   function schedulePreview() {
@@ -164,7 +186,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
         canvas.width = source.width; canvas.height = source.height;
         canvas.getContext('2d').drawImage(source, 0, 0);
         const mask = $('candy-show-mask').checked && selected.has(n);
-        await recolorCanvas(canvas, item.recolor, { mask });
+        await recolorCanvas(canvas, imageRules(item), { mask, strokes: item.protection });
         if (version !== previewVersion || current !== project) return;
         canvas.classList.remove('hidden'); row.querySelector('[data-after]').classList.add('hidden');
         row.querySelector('.candy-after-title').textContent = mask ? '粉色标记 · 将改色的范围' : '改后 · 实时预览';
@@ -180,7 +202,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
   function renderImages() {
     imageObserver.disconnect(); visibleImages.clear(); previewVersion++; setPicking(false);
     $('candy-image-count').textContent = `共 ${project.images.length} 张`;
-    $('candy-images').innerHTML = project.images.map((item, i) => `<article class="candy-image-row" data-image-row="${i}"><div class="candy-row-top"><label><input type="checkbox" data-pick="${i}" ${selected.has(i) ? 'checked' : ''}> 第 ${i + 1} 张</label><small id="candy-size-${i}">像素尺寸：加载中…</small><small>${imageSummary(item)}</small></div><div class="candy-compare"><div class="candy-side"><strong>改前 · 原图</strong><img loading="lazy" data-before="${i}" src="${safe(item.url)}" alt="第 ${i + 1} 张原图"></div><div class="candy-side"><strong class="candy-after-title">改后 · 实时预览</strong><img loading="lazy" data-after="${i}" src="${safe(item.keep ? item.url : preview(item))}" style="filter:${item.keep || imageMode(item) === 'selective' ? 'none' : filter(item)}" alt="第 ${i + 1} 张改色预览"><canvas data-canvas="${i}" class="hidden" role="img" aria-label="第 ${i + 1} 张指定颜色预览"></canvas></div></div><div class="candy-row-tools"><button class="drawer-button" type="button" data-edit="${i}">单独调这张</button><button class="drawer-button" type="button" data-reset="${i}">恢复原色</button><button class="drawer-button" type="button" data-download="${i}">下载这张原图 ↓</button><button class="drawer-button" type="button" data-save-original="${i}">原图存入当前相册</button><label class="drawer-button">上传手改图<input data-override="${i}" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp" hidden></label><label><input type="checkbox" data-keep="${i}" ${item.keep ? 'checked' : ''}> 保持原图链</label></div><p class="candy-image-status" role="status" aria-live="polite"></p><small class="candy-link">${safe(item.url)}</small></article>`).join('') || '<div class="empty">没有找到图片图链，仍可以修改下方颜色。</div>';
+    $('candy-images').innerHTML = project.images.map((item, i) => `<article class="candy-image-row" data-image-row="${i}"><div class="candy-row-top"><label><input type="checkbox" data-pick="${i}" ${selected.has(i) ? 'checked' : ''}> 第 ${i + 1} 张</label><small id="candy-size-${i}">像素尺寸：加载中…</small><small>${imageSummary(item)}</small></div><div class="candy-compare"><div class="candy-side"><strong>改前 · 原图</strong><img loading="lazy" data-before="${i}" src="${safe(item.url)}" alt="第 ${i + 1} 张原图"></div><div class="candy-side"><strong class="candy-after-title">改后 · 实时预览</strong><img loading="lazy" data-after="${i}" src="${safe(item.keep ? item.url : preview(item))}" style="filter:${item.keep || imageMode(item) === 'selective' ? 'none' : filter(item)}" alt="第 ${i + 1} 张改色预览"><canvas data-canvas="${i}" class="hidden" role="img" aria-label="第 ${i + 1} 张指定颜色预览"></canvas></div></div><div class="candy-row-tools"><button class="drawer-button" type="button" data-edit="${i}">单独调这张</button><button class="drawer-button" type="button" data-reset="${i}">恢复原色</button><button class="drawer-button candy-row-protect" type="button" data-protect="${i}" ${imageMode(item) !== 'selective' || item.keep ? 'disabled' : ''} title="指定颜色模式中，可保护不想改色的部分">${item.protection?.length ? '编辑保护区域' : '保护区域'}</button><button class="drawer-button" type="button" data-download="${i}">下载这张原图 ↓</button><button class="drawer-button" type="button" data-save-original="${i}">原图存入当前相册</button><label class="drawer-button">上传手改图<input data-override="${i}" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp" hidden></label><label><input type="checkbox" data-keep="${i}" ${item.keep ? 'checked' : ''}> 保持原图链</label></div><p class="candy-image-status" role="status" aria-live="polite"></p><small class="candy-link">${safe(item.url)}</small></article>`).join('') || '<div class="empty">没有找到图片图链，仍可以修改下方颜色。</div>';
     $('candy-images').querySelectorAll('[data-before]').forEach(img => {
       img.onload = () => { const size = $(`candy-size-${img.dataset.before}`); if (size) size.textContent = `像素尺寸：${img.naturalWidth} × ${img.naturalHeight} px`; };
       img.onerror = () => { const size = $(`candy-size-${img.dataset.before}`); if (size) size.textContent = '原站无法预览，可尝试下载或上传手改图'; };
@@ -197,6 +219,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
     $('candy-color-selected-count').textContent = `已选 ${selectedColors.size} 处颜色`;
   }
   function render() {
+    activeRuleIndex = 0;
     $('candy-editor').classList.remove('hidden'); $('candy-title').value = project.name;
     $('candy-clear').disabled = false;
     selected.clear(); if (project.images.length) selected.add(0);
@@ -258,16 +281,21 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
       if (!uploadTypes.has(file.type) || file.size > 25 * 1048576) return notice('请选择 25 MB 以内的 PNG、JPEG、WebP、GIF、AVIF 或 BMP 图片', true);
       if (item.overrideUrl) URL.revokeObjectURL(item.overrideUrl);
       item.override = file; item.overrideUrl = URL.createObjectURL(file); item.keep = false; item.savedUrl = '';
+      item.protection = [];
       renderImages(); status(`第 ${Number(target.dataset.override) + 1} 张已换成你上传的手改图。`);
     }
   });
   $('candy-images').addEventListener('click', async event => {
     const button = event.target.closest('button'); if (!button || !project) return;
+    if (button.dataset.protect !== undefined && !busy) {
+      const index = Number(button.dataset.protect), item = project.images[index];
+      if (imageMode(item) === 'selective' && !item.keep) { setPicking(false); protector.open(item, index); }
+    }
     if (button.dataset.edit !== undefined) { selected.clear(); selected.add(Number(button.dataset.edit)); renderImages(); showPalette(true); (imageMode(project.images[Number(button.dataset.edit)]) === 'selective' ? $('candy-recolor-target') : $('candy-hue-number')).focus(); }
     if (button.dataset.reset !== undefined) {
       const item = project.images[Number(button.dataset.reset)];
       if (item.overrideUrl) URL.revokeObjectURL(item.overrideUrl);
-      Object.assign(item, { hue: 0, sat: 100, light: 100, mode: 'global', recolor: { ...DEFAULT_RECOLOR }, override: null, overrideUrl: '', keep: false, savedUrl: '' }); renderImages();
+      Object.assign(item, { hue: 0, sat: 100, light: 100, mode: 'global', recolor: { ...DEFAULT_RECOLOR }, recolors: [], protection: [], override: null, overrideUrl: '', keep: false, savedUrl: '' }); renderImages();
     }
     if (button.dataset.download !== undefined) try { await downloadOriginal(Number(button.dataset.download)); } catch (error) { notice(error.message, true); }
     if (button.dataset.saveOriginal !== undefined) {
@@ -283,14 +311,29 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
   });
   $('candy-select-all').addEventListener('click', () => { project?.images.forEach((_, i) => selected.add(i)); renderImages(); });
   $('candy-select-none').addEventListener('click', () => { selected.clear(); renderImages(); });
-  $('candy-reset-selected').addEventListener('click', () => { for (const n of selected) { const item = project.images[n]; if (item.overrideUrl) URL.revokeObjectURL(item.overrideUrl); Object.assign(item, { hue: 0, sat: 100, light: 100, mode: 'global', recolor: { ...DEFAULT_RECOLOR }, override: null, overrideUrl: '', keep: false, savedUrl: '' }); } renderImages(); });
+  $('candy-reset-selected').addEventListener('click', () => { for (const n of selected) { const item = project.images[n]; if (item.overrideUrl) URL.revokeObjectURL(item.overrideUrl); Object.assign(item, { hue: 0, sat: 100, light: 100, mode: 'global', recolor: { ...DEFAULT_RECOLOR }, recolors: [], protection: [], override: null, overrideUrl: '', keep: false, savedUrl: '' }); } renderImages(); });
   $('candy-palette-open').addEventListener('click', () => showPalette($('candy-palette').classList.contains('hidden')));
   $('candy-palette-close').addEventListener('click', () => showPalette(false));
   function updateSummaries() {
     $('candy-images').querySelectorAll('[data-image-row]').forEach(row => {
       row.querySelector('.candy-row-top small:last-child').textContent = imageSummary(project.images[Number(row.dataset.imageRow)]);
     });
+    updateProtectionButtons();
   }
+  function updateProtectionButtons() {
+    if (!project) return;
+    $('candy-images').querySelectorAll('[data-protect]').forEach(button => {
+      const item = project.images[Number(button.dataset.protect)];
+      button.disabled = imageMode(item) !== 'selective' || item.keep;
+      button.textContent = item.protection?.length ? '编辑保护区域' : '保护区域';
+    });
+    syncPalette();
+  }
+  $('candy-protection-open').addEventListener('click', () => {
+    if (!project || !selected.size || busy) return;
+    const index = [...selected][0], item = project.images[index];
+    if (imageMode(item) === 'selective' && !item.keep) { setPicking(false); protector.open(item, index); }
+  });
   $('candy-palette').querySelectorAll('[data-candy-mode]').forEach(button => button.addEventListener('click', () => {
     if (!project || !selected.size || busy) return;
     setPicking(false);
@@ -303,13 +346,42 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
   }));
   function changeRule(change) {
     if (!project || !selected.size || busy) return;
-    const first = project.images[[...selected][0]], rule = { ...(first.recolor || DEFAULT_RECOLOR), ...change };
+    const first = project.images[[...selected][0]], rules = structuredClone(imageRules(first));
+    rules[activeRuleIndex] = { ...rules[activeRuleIndex], ...change };
+    applyRules(rules);
+  }
+  function applyRules(rules) {
+    if (!project || !selected.size || busy) return;
     for (const n of selected) {
       const item = project.images[n];
-      item.mode = 'selective'; item.recolor = { ...rule }; item.keep = false; item.savedUrl = '';
+      item.mode = 'selective'; item.recolors = structuredClone(rules); item.recolor = { ...rules[0] }; item.keep = false; item.savedUrl = '';
     }
     syncPalette(); updateSummaries(); updatePreview();
   }
+  $('candy-rule-add').addEventListener('click', () => {
+    if (!project || !selected.size || busy) return;
+    const rules = structuredClone(imageRules(project.images[[...selected][0]]));
+    if (rules.length >= 6) return;
+    rules.push({ ...DEFAULT_RECOLOR });
+    activeRuleIndex = rules.length - 1; applyRules(rules);
+    setPicking(true);
+    $('candy-pick-hint').textContent = '点一下原图，选择第 ' + (activeRuleIndex + 1) + ' 条规则要替换的颜色。';
+    $('candy-images').querySelector(`[data-before="${[...selected][0]}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+  $('candy-rules').addEventListener('click', event => {
+    const button = event.target.closest('button'); if (!button || !project || busy) return;
+    if (button.dataset.rulePick !== undefined) {
+      activeRuleIndex = Number(button.dataset.rulePick); setPicking(false); syncPalette();
+    }
+    if (button.dataset.ruleDelete !== undefined && selected.size) {
+      const rules = structuredClone(imageRules(project.images[[...selected][0]]));
+      if (rules.length === 1) return;
+      const index = Number(button.dataset.ruleDelete);
+      rules.splice(index, 1);
+      if (activeRuleIndex > index) activeRuleIndex--;
+      activeRuleIndex = Math.min(activeRuleIndex, rules.length - 1); setPicking(false); applyRules(rules);
+    }
+  });
   for (const key of ['source', 'target', 'range', 'softness']) {
     $('candy-recolor-' + key).addEventListener('input', event => changeRule({ [key]: ['range', 'softness'].includes(key) ? Number(event.target.value) : event.target.value }));
   }
@@ -454,7 +526,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
       const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('浏览器无法创建画布');
       if (imageMode(item) !== 'selective' && typeof ctx.filter !== 'string' && (item.hue !== 0 || item.sat !== 100 || item.light !== 100)) throw new Error('此浏览器不支持画布调色，请换用新版浏览器');
       ctx.filter = imageMode(item) === 'selective' ? 'none' : filter(item); ctx.drawImage(bitmap, 0, 0);
-      if (imageMode(item) === 'selective') await recolorCanvas(canvas, item.recolor, { yieldToUI: true });
+      if (imageMode(item) === 'selective') await recolorCanvas(canvas, imageRules(item), { yieldToUI: true, strokes: item.protection });
       const output = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
       canvas.width = 0; canvas.height = 0;
       if (!output || output.size > 25 * 1048576) throw new Error('生成的 PNG 超过单张 25 MB，请缩小图片');

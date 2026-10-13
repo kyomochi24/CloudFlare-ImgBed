@@ -12,8 +12,9 @@ const chrome = process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Ap
 if (!existsSync(chrome)) { process.stdout.write('Candy browser smoke skipped: Chrome is not installed.\n'); process.exit(0); }
 const source = await readFile(join(root, 'index.html'), 'utf8');
 const section = source.match(/<section class="card candy-card">[\s\S]*?<\/section>/)?.[0];
+const protectionDialog = source.match(/<dialog id="candy-protection-dialog"[\s\S]*?<\/dialog>/)?.[0];
 assert.ok(section, 'Candy editor section exists');
-const fixture = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><link rel="stylesheet" href="/studio/style.css"><link rel="stylesheet" href="/studio/candy.css"><body><main class="shell"><div id="notice"></div>${section}</main><script type="module">
+const fixture = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><link rel="stylesheet" href="/studio/style.css"><link rel="stylesheet" href="/studio/candy.css"><body><main class="shell"><div id="notice"></div>${section}</main>${protectionDialog}<script type="module">
 import { initCandy } from '/studio/candy.js';
 const state = {user:{id:'browser-test',tier:'pichu'},albumId:'album',albums:[]};
 const api = async path => path === 'candy/quota' ? {used:0,dailyLimit:2,remaining:2} : {id:'album'};
@@ -30,7 +31,7 @@ document.body.dataset.smoke=JSON.stringify({editor:!document.querySelector('#can
 const server = createServer(async (request, response) => {
   if (request.url === '/smoke') { response.setHeader('Content-Type', 'text/html; charset=utf-8'); response.end(fixture); return; }
   const pathname = new URL(request.url, 'http://localhost').pathname;
-  if (/^\/studio\/(candy\.js|candy-utils\.js|candy-recolor\.js|theme-utils\.js|style\.css|candy\.css)$/.test(pathname)) {
+  if (/^\/studio\/(candy\.js|candy-utils\.js|candy-recolor\.js|candy-protection\.js|theme-utils\.js|style\.css|candy\.css)$/.test(pathname)) {
     const file = join(root, pathname.slice('/studio/'.length));
     response.setHeader('Content-Type', file.endsWith('.css') ? 'text/css' : 'text/javascript');
     response.end(await readFile(file)); return;
