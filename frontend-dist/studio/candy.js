@@ -1,4 +1,4 @@
-import { colorRgb, exportTheme, inspectTheme, mapColor } from './candy-utils.js?v=20260923b';
+import { colorRgb, exportTheme, inspectTheme, mapColor, familyMatches, mapFamilyColor, isNeutralColor, migrateColorChanges } from './candy-utils.js?v=20261015a';
 import { initProtectionEditor } from './candy-protection.js?v=20261014b';
 import { initCandyThemePreview } from './candy-theme-preview.js?v=20261014c';
 import { DEFAULT_RECOLOR, recolorCanvas, sampleColor } from './candy-recolor.js?v=20261014b';
@@ -256,9 +256,10 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
   function renderColors() {
     $('candy-color-count').textContent = `共 ${project.colors.length} 处`;
     const scroll = $('candy-colors').scrollTop;
-    $('candy-colors').innerHTML = project.colors.map((color, i) => `<div class="candy-color-row ${mappedFrom === i ? 'is-map-source' : ''}" data-color-row="${i}"><label class="candy-color-pick"><input type="checkbox" data-color-pick="${i}" ${selectedColors.has(i) ? 'checked' : ''}><span>${i + 1}. ${safe(color.label)}</span></label><span title="原值：${safe(color.original)}"><i class="candy-swatch" style="background:${safe(color.hex)}"></i>原色 RGB(${colorRgb(color.original)})</span><div class="candy-color-edit"><label><input type="color" data-color="${i}" value="${safe(project.changes[i] || color.hex)}" aria-label="修改第 ${i + 1} 处颜色"><code>RGB(${colorRgb(project.changes[i] || color.hex)})</code></label><button type="button" data-color-map="${i}" title="将原色到当前颜色的变化应用到勾选的其他颜色">用作映射样本</button><button type="button" data-color-reset="${i}">还原</button></div></div>`).join('') || '<div class="hint">没有识别到十六进制或 RGB / RGBA 颜色。</div>';
+    $('candy-colors').innerHTML = project.colors.map((color, i) => `<div class="candy-color-row ${mappedFrom === i ? 'is-map-source' : ''}" data-color-row="${i}"><label class="candy-color-pick"><input type="checkbox" data-color-pick="${i}" ${selectedColors.has(i) ? 'checked' : ''}><span>${i + 1}. ${safe(color.label)}</span></label><span title="原值：${safe(color.original)}"><i class="candy-swatch" style="background:${safe(color.hex)}"></i>原色 RGB(${colorRgb(color.original)})</span><div class="candy-color-edit"><label><input type="color" data-color="${i}" value="${safe(project.changes[i] || color.hex)}" aria-label="修改第 ${i + 1} 处颜色"><code>RGB(${colorRgb(project.changes[i] || color.hex)})</code></label><button type="button" data-color-family="${i}" title="使用这处原色选择相近的色系">选这个色系</button><button type="button" data-color-map="${i}" title="将原色到当前颜色的变化应用到勾选的其他颜色">用作映射样本</button><button type="button" data-color-reset="${i}">还原</button></div></div>`).join('') || '<div class="hint">没有识别到十六进制或 RGB / RGBA 颜色。</div>';
     $('candy-colors').scrollTop = scroll;
     $('candy-color-selected-count').textContent = `已选 ${selectedColors.size} 处颜色`;
+    updateFamilyHint();
   }
   function render() {
     themePreview.markDirty();
@@ -277,6 +278,7 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
       const raw = await file.text(), inspected = inspectTheme(raw);
       release();
       project = { id: crypto.randomUUID(), raw, name: `${inspected.name || file.name.replace(/\.json$/i, '')}-糖果色`, images: inspected.images.map(url => ({ url, hue: 0, sat: 100, light: 100, keep: false, override: null, savedUrl: '' })), colors: inspected.colors, changes: {} };
+      project.colorSchema=2;
       render();
     } catch (error) { notice(`美化 JSON 无法读取：${error.message}`, true); }
   }
@@ -300,7 +302,10 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
       const saved = await drafts('readonly', store => store.get(id));
       if (!saved || saved.userId !== state.user?.id) throw new Error('没有找到这份草稿');
       release(); project = saved.project;
+      if(project.colorSchema!==2){project.changes=migrateColorChanges(project.raw,project.changes);project.colorSchema=2;}
       project.colors = inspectTheme(project.raw).colors;
+      const existing=new Map(project.images.map(item=>[item.url,item]));
+      project.images=inspectTheme(project.raw).images.map(url=>existing.get(url)||{url,hue:0,sat:100,light:100,keep:false,override:null,savedUrl:''});
       for (const item of project.images) if (item.override) item.overrideUrl = URL.createObjectURL(item.override);
       render(); notice('草稿已经打开 ♡');
     } catch (error) { notice(`打开草稿失败：${error.message}`, true); }
@@ -518,11 +523,40 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
   }
   $('candy-color-select-all').addEventListener('click', () => { project?.colors.forEach((_, i) => selectedColors.add(i)); renderColors(); });
   $('candy-color-select-none').addEventListener('click', () => { selectedColors.clear(); renderColors(); });
+  function familyOptions(){
+    return {range:Number($('candy-family-range').value),scope:$('candy-family-scope').value,protectNeutral:$('candy-family-protect').checked};
+  }
+  function familyTargets(){
+    if(!project)return [];
+    const options=familyOptions(),source=$('candy-family-source').value;
+    return project.colors.map((color,index)=>({color,index})).filter(({color})=>familyMatches(color,source,options));
+  }
+  function updateFamilyHint(){
+    const targets=familyTargets(),chosen=targets.filter(({index})=>selectedColors.has(index));
+    $('candy-family-range-value').textContent=$('candy-family-range').value+'°';
+    $('candy-family-status').textContent=project ? `找到 ${targets.length} 处相近色 · 其中已勾选 ${chosen.length} 处` : '先导入美化，再选择一个色系。';
+    $('candy-family-select').disabled=!targets.length;
+    $('candy-family-apply').disabled=!chosen.length;
+  }
+  for(const id of ['source','target','range','scope','protect'])$('candy-family-'+id).addEventListener('input',updateFamilyHint);
+  function selectFamily(){
+    selectedColors.clear();for(const {index}of familyTargets())selectedColors.add(index);renderColors();
+  }
+  $('candy-family-select').addEventListener('click',selectFamily);
+  $('candy-family-apply').addEventListener('click',()=>{
+    if(!project||busy)return;
+    const targets=familyTargets().filter(({index})=>selectedColors.has(index));
+    if(!targets.length)return;
+    for(const {color,index}of targets)project.changes[index]=mapFamilyColor(color.hex,$('candy-family-source').value,$('candy-family-target').value);
+    renderColors();themePreview.markDirty();
+    $('candy-map-status').textContent=`已调整 ${targets.length} 处所选相近色，保留原有深浅和透明度。`;
+  });
   $('candy-colors').addEventListener('change', event => {
     const input = event.target.closest('[data-color-pick]'); if (!input) return;
     const n = Number(input.dataset.colorPick);
     input.checked ? selectedColors.add(n) : selectedColors.delete(n);
     $('candy-color-selected-count').textContent = `已选 ${selectedColors.size} 处颜色`;
+    updateFamilyHint();
   });
   $('candy-colors').addEventListener('input', event => {
     const input = event.target.closest('[data-color]'); if (!input || !project) return;
@@ -532,10 +566,15 @@ export function initCandy({ api, state, refreshProfile, refreshAlbums, notice })
   });
   $('candy-colors').addEventListener('click', event => {
     const button = event.target.closest('button'); if (!button || !project) return;
+    if(button.dataset.colorFamily!==undefined){
+      const color=project.colors[Number(button.dataset.colorFamily)];
+      $('candy-family-source').value=color.hex;$('candy-family-panel').open=true;selectFamily();
+      $('candy-family-panel').scrollIntoView({behavior:'smooth',block:'nearest'});
+    }
     if (button.dataset.colorMap !== undefined) {
       const n = Number(button.dataset.colorMap), before = project.colors[n].hex, after = project.changes[n] || before;
       if (before === after) return notice('请先把这处颜色从 A 调成 B，再用它作为映射样本', true);
-      const targets = [...selectedColors].filter(i => i !== n);
+      const targets = [...selectedColors].filter(i => i !== n && (!$('candy-family-protect').checked || !isNeutralColor(project.colors[i].hex)));
       if (!targets.length) return notice('请先勾选至少一处其他颜色作为映射目标', true);
       for (const i of targets) project.changes[i] = mapColor(project.colors[i].hex, before, after);
       mappedFrom = n; renderColors();

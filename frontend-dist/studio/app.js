@@ -1,6 +1,6 @@
-import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=20260922d';
+import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=20261015a';
 import { initStudioTools } from './tools.js?v=20260922j';
-import { initCandy } from './candy.js?v=20261014c';
+import { initCandy } from './candy.js?v=20261015a';
 import { initFontTool } from './font-tool.js?v=20260928-font3';
 
 (() => {

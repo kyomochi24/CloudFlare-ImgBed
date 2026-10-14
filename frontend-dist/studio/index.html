@@ -9,8 +9,8 @@
   <title>浅浅丘的甜品屋 · 把喜欢的图片好好收藏</title>
   <link rel="stylesheet" href="/studio/style.css?v=20260925a">
   <link rel="stylesheet" href="/studio/tools.css?v=20260928-font3">
-  <link rel="stylesheet" href="/studio/candy.css?v=20261014c">
-  <script src="/studio/app.js?v=20261014c" type="module"></script>
+  <link rel="stylesheet" href="/studio/candy.css?v=20261015a">
+  <script src="/studio/app.js?v=20261015a" type="module"></script>
 </head>
 <body>
   <picture class="site-wallpaper" aria-hidden="true"><source media="(max-width: 820px)" srcset="https://771553.xyz/file/1790000025921_9c1668d8be042af7b0d0fdea1b4c1c20.jpg"><img src="https://771553.xyz/file/1789999968170_%E5%BE%AE%E4%BF%A1%E5%9B%BE%E7%89%87_20260921221136_547_164.jpg" alt="" referrerpolicy="no-referrer"></picture>
@@ -87,7 +87,13 @@
           </aside>
           <div id="candy-images" class="candy-image-list"></div>
           <button id="candy-download-all" class="drawer-button" type="button">下载全部原图 ↓</button>
-          <div class="candy-head"><h3>美化里的颜色 <small id="candy-color-count"></small></h3><p>按 JSON 中出现的顺序排列。先把一个样本色 A 调成 B，再点“用作映射样本”，即可将相同的色相、饱和度和亮度变化应用到勾选的其他颜色。</p></div><div class="candy-color-tools"><button id="candy-color-select-all" class="drawer-button" type="button">全选颜色</button><button id="candy-color-select-none" class="drawer-button" type="button">取消选择</button><span id="candy-color-selected-count">已选 0 处颜色</span><span class="hint">映射会覆盖勾选颜色的当前改色；原色始终不变。</span></div><p id="candy-map-status" class="candy-map-status" role="status" aria-live="polite"></p><div id="candy-colors" class="candy-color-list"></div>
+          <div class="candy-head"><h3>美化里的颜色 <small id="candy-color-count"></small></h3><p>按 JSON 中出现的顺序排列。先把一个样本色 A 调成 B，再点“用作映射样本”，即可将相同的色相、饱和度和亮度变化应用到勾选的其他颜色。</p></div><details id="candy-family-panel" class="candy-family-panel"><summary>✿ 按色系一起调色</summary><div class="candy-family-body">
+  <div class="candy-family-pair"><label>原来的色系<input id="candy-family-source" type="color" value="#ed8fb6"></label><span aria-hidden="true">→</span><label>换成这个色系<input id="candy-family-target" type="color" value="#8abde8"></label></div>
+  <div class="candy-family-options"><label>作用范围<select id="candy-family-scope"><option value="text">只改文字</option><option value="all">所有样式颜色</option></select></label><label class="candy-family-neutral"><input id="candy-family-protect" type="checkbox" checked>保护黑白灰</label></div>
+  <label class="candy-family-range">相近颜色范围<input id="candy-family-range" type="range" min="5" max="85" value="30"><output id="candy-family-range-value">30°</output></label>
+  <div class="candy-family-actions"><button id="candy-family-select" type="button">选择相近色</button><button id="candy-family-apply" type="button">应用到所选颜色</button><span id="candy-family-status" role="status" aria-live="polite">先导入美化，再选择一个色系。</span></div>
+  <p>按原色识别，保留深浅和透明度。可在下方取消不想改的项目；单独改色仍可自由选择。</p>
+</div></details><div class="candy-color-tools"><button id="candy-color-select-all" class="drawer-button" type="button">全选颜色</button><button id="candy-color-select-none" class="drawer-button" type="button">取消选择</button><span id="candy-color-selected-count">已选 0 处颜色</span><span class="hint">映射会覆盖勾选颜色的当前改色；原色始终不变。</span></div><p id="candy-map-status" class="candy-map-status" role="status" aria-live="polite"></p><div id="candy-colors" class="candy-color-list"></div>
         </div>
       </section>
       <div class="section-heading"><span>06 / THE CREATOR CLUB</span><h2>申请成为皮卡丘 <em>♡</em></h2><p>提交作品给管理员审核。通过后，每个自然月可上传 1 GB，已经上传的图片会一直保留。</p></div>

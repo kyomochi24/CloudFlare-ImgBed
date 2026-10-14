@@ -37,3 +37,4 @@ test('finds named white in multiline CSS values without treating white-space or 
   assert.match(output.custom_css, /border: 1px solid #ffccaa/);
   assert.match(output.custom_css, /background: transparent/);
 });
+

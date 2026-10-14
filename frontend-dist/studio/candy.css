@@ -113,6 +113,28 @@
 #candy-theme-preview-frame{position:absolute;left:0;top:0;border:0;border-radius:9px;background:#202026;transform-origin:top left;display:block}
 .candy-theme-preview-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:13px 19px;font-size:10px;color:#af96a6}
 .candy-theme-preview-dialog :is(button,select):focus-visible{outline:2px solid #99b0d6;outline-offset:2px}
+.candy-family-panel{margin:15px 0;padding:12px 15px;border:1px solid #e7cdda;border-radius:15px;background:#fff9fc}
+.candy-family-panel summary{color:#9f698b;font-size:13px;cursor:pointer}
+.candy-family-body{padding-top:12px}
+.candy-family-pair{display:flex;align-items:center;gap:16px;max-width:400px}
+.candy-family-pair label{flex:1;display:flex;flex-direction:column;gap:6px;font-size:11px;color:#a18498}
+.candy-family-pair input[type=color]{width:100%;height:36px;padding:2px;margin:0;border:1px solid #ebd7e1;border-radius:8px;background:#fff;cursor:pointer}
+.candy-family-pair>span{color:#b698ab}
+.candy-family-options{display:flex;align-items:center;gap:20px;flex-wrap:wrap;margin:12px 0}
+.candy-family-options label{display:flex;align-items:center;gap:8px;font-size:11px}
+.candy-family-options select{padding:6px 9px;border:1px solid #e6d2df;border-radius:8px;background:#fff;color:#926e87;font:inherit}
+.candy-family-neutral input{width:15px;height:15px;margin:0;accent-color:#cb83a4}
+.candy-family-range{display:flex!important;align-items:center;gap:10px;max-width:400px;font-size:11px!important}
+.candy-family-range input{flex:1;width:80px;margin:0;padding:0;accent-color:#cb83a4}
+.candy-family-range output{font-size:11px;color:#a07c94}
+.candy-family-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
+.candy-family-actions button{padding:7px 10px;border:1px solid #e4bfd2;border-radius:9px;background:#fff;color:#a06889;font:inherit;font-size:11px}
+.candy-family-actions button#candy-family-apply{background:#f5e8f0}
+.candy-family-actions button:disabled{opacity:.4;cursor:default}
+.candy-family-actions span,.candy-family-body>p{font-size:10px;color:#b092a5;line-height:1.6}
+.candy-family-body>p{margin:9px 0 0}
+.candy-family-panel :is(button,input,select):focus-visible{outline:2px solid #99b0d6;outline-offset:2px}
+@media(max-width:700px){.candy-family-panel{padding:11px 12px}.candy-family-options{gap:10px}.candy-family-actions span{width:100%}}
 @media(max-width:700px){
  .candy-theme-preview-dialog{width:calc(100vw - 12px);border-radius:16px}
  .candy-theme-preview-head{padding:13px 15px}

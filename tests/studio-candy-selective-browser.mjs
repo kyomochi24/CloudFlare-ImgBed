@@ -125,7 +125,7 @@ try {
       response.setHeader('Content-Type','text/html; charset=utf-8');
       response.end(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/studio/style.css"><link rel="stylesheet" href="/studio/candy.css"><body><main class="shell" style="padding-top:32px"><div class="section-heading"><span>COLOR CANDY BOX</span><h2>丘丘糖果色匣 ✿</h2><p>给喜欢的颜色，换一种心情。</p></div><div id="notice" role="status"></div>${section}</main>${protectionDialog}${themePreviewDialog}<script type="module">${setup}${path==='/smoke'?checks:''}</script></body></html>`);return;
     }
-    if (/^\/studio\/(candy\.js|candy-utils\.js|candy-recolor\.js|candy-protection\.js|candy-theme-preview\.js|theme-utils\.js|style\.css|candy\.css)$/.test(path)) {
+    if (/^\/studio\/(candy\.js|candy-utils\.js|css-utils\.js|candy-recolor\.js|candy-protection\.js|candy-theme-preview\.js|theme-utils\.js|style\.css|candy\.css)$/.test(path)) {
       response.setHeader('Content-Type',path.endsWith('.css')?'text/css':'text/javascript');
       response.end(await readFile(join(root,path.slice('/studio/'.length))));return;
     }
