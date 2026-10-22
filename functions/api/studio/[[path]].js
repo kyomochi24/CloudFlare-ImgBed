@@ -2,15 +2,19 @@ import { getDatabase } from '../../utils/databaseAdapter.js';
 import { addFileToIndex, removeFileFromIndex } from '../../utils/indexManager.js';
 import { hashPassword, verifyPassword } from '../../utils/auth/passwordHash.js';
 import { validateSession } from '../../utils/auth/sessionManager.js';
+import { reserveStudioQuota, releaseStudioQuota } from '../../utils/studioQuota.js';
 
 const BASE_LIMIT = 200 * 1024 * 1024;
+const DONDON_LIMIT = 500 * 1024 * 1024;
 const CREATOR_MONTH_LIMIT = 1024 * 1024 * 1024;
 const SINGLE_FILE_LIMIT = 25 * 1024 * 1024;
 const MIN_PART_SIZE = 8 * 1024 * 1024;
 const MAX_PART_SIZE = 80 * 1024 * 1024;
 const MAX_PARTS = 10000;
 const SESSION_SECONDS = 7 * 86400;
-const DEFAULT_GUILD_IDS = '1291925535324110879,1379304008157499423';
+const DONDON_GUILD_ID = '1523088539510771802';
+const DONDON_ROLE_ID = '1554356055935295498';
+const DEFAULT_GUILD_IDS = `1291925535324110879,1379304008157499423,${DONDON_GUILD_ID}`;
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
 const EXTENSIONS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif', 'image/bmp': 'bmp' };
 const FONT_TYPES = { 'font/ttf': 'ttf', 'font/otf': 'otf', 'font/woff': 'woff', 'font/woff2': 'woff2' };
@@ -36,8 +40,10 @@ const cookie = (token, age = SESSION_SECONDS) => `studio_session=${token}; Path=
 const getCookie = (request, key) => request.headers.get('Cookie')?.split(';').map(s => s.trim()).find(s => s.startsWith(`${key}=`))?.slice(key.length + 1) || '';
 const cleanName = s => String(s || '').replace(/[\r\n/\\<>:"|?*\x00-\x1f]/g, '_').trim().slice(0, 100);
 const plain = s => String(s || '').trim();
-const safeUser = u => ({ id: u.id, username: u.username, discordId: u.discord_id, discordName: u.discord_name, accountType: u.account_type, tier: u.is_super ? 'super' : u.tier, storedBytes: u.stored_bytes, monthUploadedBytes: u.month_uploaded_bytes, monthKey: u.month_key, baseLimit: BASE_LIMIT, creatorMonthLimit: CREATOR_MONTH_LIMIT });
-const userSelect = 'SELECT u.*, EXISTS(SELECT 1 FROM studio_super_users su WHERE su.user_id=u.id) AS is_super FROM studio_users u';
+const effectiveTier = user => user.is_super ? 'super' : user.tier === 'pikachu' ? 'pikachu' : user.is_dondon ? 'dondon' : 'pichu';
+const safeUser = u => ({ id: u.id, username: u.username, discordId: u.discord_id, discordName: u.discord_name, accountType: u.account_type, tier: effectiveTier(u), storedBytes: u.stored_bytes, monthUploadedBytes: u.month_key === monthKey() ? u.month_uploaded_bytes : 0, monthKey: monthKey(), baseLimit: u.is_dondon ? DONDON_LIMIT : BASE_LIMIT, creatorMonthLimit: CREATOR_MONTH_LIMIT });
+const userFlags = 'EXISTS(SELECT 1 FROM studio_super_users su WHERE su.user_id=u.id) AS is_super, EXISTS(SELECT 1 FROM studio_dondon_users du WHERE du.user_id=u.id) AS is_dondon';
+const userSelect = `SELECT u.*, ${userFlags} FROM studio_users u`;
 
 function announcementData(value = {}) {
   const contentRuns = Array.isArray(value.contentRuns) ? value.contentRuns.slice(0, 200).map(run => ({
@@ -83,7 +89,7 @@ async function bodyJson(request) {
 async function currentUser(db, request) {
   const token = getCookie(request, 'studio_session');
   if (!token) return null;
-  const row = await db.prepare(`SELECT u.*, EXISTS(SELECT 1 FROM studio_super_users su WHERE su.user_id=u.id) AS is_super FROM studio_sessions s JOIN studio_users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.disabled=0`).bind(await sha(token), Date.now()).first();
+  const row = await db.prepare(`SELECT u.*, ${userFlags} FROM studio_sessions s JOIN studio_users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.disabled=0`).bind(await sha(token), Date.now()).first();
   return row || null;
 }
 async function sessionResponse(db, user) {
@@ -111,7 +117,7 @@ async function oauthStart(env, request) {
   const state = uid().replaceAll('-', '') + uid().replaceAll('-', '');
   const origin = new URL(request.url).origin;
   const destination = new URL('https://discord.com/oauth2/authorize');
-  destination.search = new URLSearchParams({ client_id: env.DISCORD_CLIENT_ID, response_type: 'code', scope: 'identify guilds', redirect_uri: `${origin}/api/studio/oauth/callback`, state }).toString();
+  destination.search = new URLSearchParams({ client_id: env.DISCORD_CLIENT_ID, response_type: 'code', scope: 'identify guilds guilds.members.read', redirect_uri: `${origin}/api/studio/oauth/callback`, state }).toString();
   return redirectWithCookie(destination.toString(), 'studio_oauth_state', state);
 }
 async function oauthCallback(env, db, request) {
@@ -136,6 +142,16 @@ async function oauthCallback(env, db, request) {
   const guilds = await guildsRes.json();
   const allowed = new Set(plain(env.DISCORD_GUILD_IDS || DEFAULT_GUILD_IDS).split(',').map(x => x.trim()).filter(Boolean));
   if (!Array.isArray(guilds) || !guilds.some(g => allowed.has(g.id))) return new Response(null, { status: 302, headers: { Location: '/studio/?error=not_member', 'Cache-Control': 'no-store' } });
+  let hasDondonRole = false;
+  if (guilds.some(guild => guild.id === DONDON_GUILD_ID)) {
+    const memberResponse = await fetch(`https://discord.com/api/v10/users/@me/guilds/${DONDON_GUILD_ID}/member`, { headers });
+    if (!memberResponse.ok && memberResponse.status !== 404) return fail('Discord 身份组读取失败，请重新授权登录', 502);
+    if (memberResponse.ok) {
+      const member = await memberResponse.json();
+      if (!Array.isArray(member.roles)) return fail('Discord 身份组信息无效，请重试', 502);
+      hasDondonRole = member.roles.includes(DONDON_ROLE_ID);
+    }
+  }
   let user = await db.prepare('SELECT * FROM studio_users WHERE discord_id=?').bind(me.id).first();
   if (!user) {
     const id = uid();
@@ -146,6 +162,7 @@ async function oauthCallback(env, db, request) {
     await db.prepare('UPDATE studio_users SET discord_name=? WHERE id=?').bind(me.global_name || me.username || me.id, user.id).run();
   }
   if (user.disabled) return fail('此账号已停用', 403);
+  if (hasDondonRole) await db.prepare('INSERT OR IGNORE INTO studio_dondon_users(user_id) VALUES(?)').bind(user.id).run();
   const sessionToken = uid() + uid();
   await db.prepare('INSERT INTO studio_sessions(token_hash,user_id,expires_at) VALUES(?,?,?)').bind(await sha(sessionToken), user.id, Date.now() + SESSION_SECONDS * 1000).run();
   const h = new Headers({ Location: '/studio/', 'Cache-Control': 'no-store' });
@@ -203,16 +220,10 @@ async function reconcileCreatorMonth(db, id) {
   ) WHERE id=? AND tier='pikachu' AND NOT EXISTS(SELECT 1 FROM studio_super_users WHERE user_id=studio_users.id)`)
     .bind(month, month, month, id).run();
 }
-async function reserve(db, user, size) {
+async function reserve(db, user, id, size) {
   const month = monthKey();
   if (user.tier === 'pikachu' && !user.is_super) await reconcileCreatorMonth(db, user.id);
-  await db.prepare('UPDATE studio_users SET month_key=?,month_uploaded_bytes=0 WHERE id=? AND month_key<>?').bind(month, user.id, month).run();
-  const result = await db.prepare("UPDATE studio_users SET stored_bytes=stored_bytes+?,month_uploaded_bytes=month_uploaded_bytes+? WHERE id=? AND disabled=0 AND (EXISTS(SELECT 1 FROM studio_super_users WHERE user_id=studio_users.id) OR (tier='pichu' AND stored_bytes+?<=?) OR (tier='pikachu' AND month_uploaded_bytes+?<=?))")
-    .bind(size, size, user.id, size, BASE_LIMIT, size, CREATOR_MONTH_LIMIT).run();
-  return result.meta?.changes === 1;
-}
-async function refund(db, id, size) {
-  await db.prepare('UPDATE studio_users SET stored_bytes=max(0,stored_bytes-?),month_uploaded_bytes=max(0,month_uploaded_bytes-?) WHERE id=?').bind(size, size, id).run();
+  return reserveStudioQuota(db, user.id, id, size, month);
 }
 function acceptedSource(raw) {
   let u;
@@ -263,9 +274,9 @@ async function saveImage(context, db, user, albumId, file) {
   const fontExtension = FONT_TYPES[fontType];
   const validFont = fontType === type && cleanName(name).toLowerCase().endsWith(`.${fontExtension}`);
   if (bytes.byteLength < 1 || bytes.byteLength > SINGLE_FILE_LIMIT || (!user.is_super && !(IMAGE_TYPES.has(type) && actualImageType(bytes) === type) && !validFont)) return fail('普通账号只接受 25 MB 以内的图片或有效的 TTF、OTF、WOFF、WOFF2 字体', 400);
-  if (!await reserve(db, user, bytes.byteLength)) return fail('上传额度不足', 403);
   const extension = user.is_super ? (cleanName(name).match(/\.([a-z0-9]{1,10})$/i)?.[1] || 'bin').toLowerCase() : fontExtension || EXTENSIONS[type];
   const id = shortObjectKey(extension);
+  if (!await reserve(db, user, id, bytes.byteLength)) return fail('上传额度不足', 403);
   const metadata = studioMetadata(request, user, album, cleanName(name) || `file.${extension}`, type, bytes.byteLength);
   try {
     await env.img_r2.put(id, bytes, { httpMetadata: { contentType: type } });
@@ -275,7 +286,7 @@ async function saveImage(context, db, user, albumId, file) {
     return json({ id, url: `${new URL(request.url).origin}/file/${id}`, fileName: metadata.FileName, sizeBytes: bytes.byteLength, sourceUrl });
   } catch (error) {
     console.error('Studio upload failed', error);
-    await Promise.allSettled([env.img_r2.delete(id), getDatabase(env).delete(id), refund(db, user.id, bytes.byteLength)]);
+    await Promise.allSettled([env.img_r2.delete(id), getDatabase(env).delete(id), releaseStudioQuota(db, id)]);
     return fail('保存文件失败，请重试', 500);
   }
 }
@@ -331,10 +342,12 @@ async function multipart(context, db, user, route, method) {
     return json({ ok: true });
   }
   if (match[2] === 'complete' && method === 'POST') {
+    const saved = await db.prepare('SELECT id,file_name,size_bytes FROM studio_files WHERE id=? AND user_id=?').bind(row.object_key, user.id).first();
+    if (saved) return json({ id: saved.id, url: `${new URL(request.url).origin}/file/${saved.id}`, fileName: saved.file_name, sizeBytes: saved.size_bytes });
     const results = await db.prepare('SELECT part_number,etag FROM studio_upload_parts WHERE upload_id=? ORDER BY part_number').bind(row.id).all();
     const parts = results.results || [];
     if (parts.length !== row.part_count || parts.some((part, index) => part.part_number !== index + 1)) return fail('仍有文件分片未上传完成', 409);
-    if (!await reserve(db, user, row.size_bytes)) return fail('上传额度不足或账号权限已变更', 403);
+    if (!await reserve(db, user, row.object_key, row.size_bytes)) return fail('上传额度不足或账号权限已变更', 403);
     const metadata = studioMetadata(request, user, { id: row.album_id }, row.file_name, row.mime_type, row.size_bytes);
     let completed = false;
     try {
@@ -342,15 +355,17 @@ async function multipart(context, db, user, route, method) {
       completed = true;
       await getDatabase(env).put(row.object_key, '', { metadata });
       await db.prepare('INSERT INTO studio_files(id,user_id,album_id,file_name,mime_type,size_bytes) VALUES(?,?,?,?,?,?)').bind(row.object_key, user.id, row.album_id, row.file_name, row.mime_type, row.size_bytes).run();
-      await db.prepare('DELETE FROM studio_upload_parts WHERE upload_id=?').bind(row.id).run();
-      await db.prepare('DELETE FROM studio_uploads WHERE id=?').bind(row.id).run();
-      context.waitUntil(addFileToIndex(context, row.object_key, metadata));
-      return json({ id: row.object_key, url: `${new URL(request.url).origin}/file/${row.object_key}`, fileName: row.file_name, sizeBytes: row.size_bytes });
     } catch (error) {
       console.error('Studio multipart completion failed', error);
-      await Promise.allSettled([completed ? env.img_r2.delete(row.object_key) : upload.abort(), getDatabase(env).delete(row.object_key), refund(db, user.id, row.size_bytes)]);
+      await Promise.allSettled([completed ? env.img_r2.delete(row.object_key) : upload.abort(), getDatabase(env).delete(row.object_key), releaseStudioQuota(db, row.object_key)]);
       return fail('保存文件失败，请重试', 500);
     }
+    try {
+      await db.prepare('DELETE FROM studio_upload_parts WHERE upload_id=?').bind(row.id).run();
+      await db.prepare('DELETE FROM studio_uploads WHERE id=?').bind(row.id).run();
+    } catch (error) { console.error('Studio completed upload cleanup failed', error); }
+    context.waitUntil(addFileToIndex(context, row.object_key, metadata));
+    return json({ id: row.object_key, url: `${new URL(request.url).origin}/file/${row.object_key}`, fileName: row.file_name, sizeBytes: row.size_bytes });
   }
   return fail('请求方法无效', 405);
 }
@@ -465,7 +480,6 @@ async function handleUser(context, db, user, route, method) {
       await getDatabase(env).delete(file.id);
       const removed = await db.prepare('DELETE FROM studio_files WHERE id=? AND album_id=? AND user_id=?').bind(file.id, id, user.id).run();
       if (removed.meta?.changes) {
-        await db.prepare('UPDATE studio_users SET stored_bytes=max(0,stored_bytes-?) WHERE id=?').bind(file.size_bytes, user.id).run();
         context.waitUntil(removeFileFromIndex(context, file.id));
       }
     }
@@ -539,7 +553,6 @@ async function handleUser(context, db, user, route, method) {
     await env.img_r2.delete(id);
     await getDatabase(env).delete(id);
     await db.prepare('DELETE FROM studio_files WHERE id=? AND user_id=?').bind(id, user.id).run();
-    await db.prepare('UPDATE studio_users SET stored_bytes=max(0,stored_bytes-?) WHERE id=?').bind(file.size_bytes, user.id).run();
     context.waitUntil(removeFileFromIndex(context, id));
     return json({ ok: true });
   }
@@ -602,10 +615,10 @@ async function handleAdmin(context, db, route, method) {
   }
   if (route === 'admin/overview' && method === 'GET') {
     const [users, applications] = await Promise.all([
-      db.prepare('SELECT u.id,u.username,u.discord_id,u.discord_name,u.account_type,u.tier,u.disabled,u.stored_bytes,u.month_key,u.month_uploaded_bytes,u.created_at,EXISTS(SELECT 1 FROM studio_super_users su WHERE su.user_id=u.id) AS is_super FROM studio_users u ORDER BY u.created_at DESC LIMIT 500').all(),
+      db.prepare(`SELECT u.id,u.username,u.discord_id,u.discord_name,u.account_type,u.tier,u.disabled,u.stored_bytes,u.month_key,u.month_uploaded_bytes,u.created_at,${userFlags} FROM studio_users u ORDER BY u.created_at DESC LIMIT 500`).all(),
       db.prepare('SELECT a.*,u.username,u.discord_name FROM studio_applications a JOIN studio_users u ON u.id=a.user_id ORDER BY a.created_at DESC LIMIT 200').all()
     ]);
-    return json({ users: users.results || [], applications: applications.results || [] });
+    return json({ users: (users.results || []).map(user => ({ ...user, tier: effectiveTier(user), month_uploaded_bytes: user.month_key === monthKey() ? user.month_uploaded_bytes : 0, month_key: monthKey() })), applications: applications.results || [] });
   }
   if (route === 'admin/users' && method === 'POST') {
     const data = await bodyJson(request);
@@ -625,11 +638,13 @@ async function handleAdmin(context, db, route, method) {
     const data = await bodyJson(request);
     const user = await db.prepare('SELECT id FROM studio_users WHERE id=?').bind(id).first();
     if (!user) return fail('用户不存在', 404);
-    if (data.tier && !['pichu', 'pikachu', 'super'].includes(data.tier)) return fail('权限等级无效');
+    if (data.tier && !['pichu', 'dondon', 'pikachu', 'super'].includes(data.tier)) return fail('权限等级无效');
     if (data.tier === 'super') await db.prepare('INSERT OR IGNORE INTO studio_super_users(user_id) VALUES(?)').bind(id).run();
     else if (data.tier) {
-      await db.prepare('UPDATE studio_users SET tier=? WHERE id=?').bind(data.tier, id).run();
+      await db.prepare('UPDATE studio_users SET tier=? WHERE id=?').bind(data.tier === 'dondon' ? 'pichu' : data.tier, id).run();
       await db.prepare('DELETE FROM studio_super_users WHERE user_id=?').bind(id).run();
+      if (data.tier === 'dondon') await db.prepare('INSERT OR IGNORE INTO studio_dondon_users(user_id) VALUES(?)').bind(id).run();
+      else if (data.tier === 'pichu') await db.prepare('DELETE FROM studio_dondon_users WHERE user_id=?').bind(id).run();
     }
     if (typeof data.disabled === 'boolean') await db.prepare('UPDATE studio_users SET disabled=? WHERE id=?').bind(data.disabled ? 1 : 0, id).run();
     return json({ ok: true });
@@ -659,9 +674,9 @@ export async function onRequest(context) {
     if (route === 'config' && method === 'GET') return json({ discordEnabled: !!(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET), maxFileBytes: SINGLE_FILE_LIMIT });
     if (route === 'announcement' && method === 'GET') return json({ announcement: await readAnnouncement(env) });
     if (route === 'oauth/start' && method === 'GET') return oauthStart(env, request);
-    if (route === 'oauth/callback' && method === 'GET') return oauthCallback(env, db, request);
-    if (route === 'login' && method === 'POST') return login(db, request);
-    if (route.startsWith('admin/')) return handleAdmin(context, db, route, method);
+    if (route === 'oauth/callback' && method === 'GET') return await oauthCallback(env, db, request);
+    if (route === 'login' && method === 'POST') return await login(db, request);
+    if (route.startsWith('admin/')) return await handleAdmin(context, db, route, method);
     const user = await currentUser(db, request);
     if (!user) return fail('请先登录', 401);
     return await handleUser(context, db, user, route, method);

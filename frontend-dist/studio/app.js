@@ -57,7 +57,7 @@ import { initFontTool } from './font-tool.js?v=20260928-font3';
     const limit = creator ? u.creatorMonthLimit : u.baseLimit;
     const month = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 7);
     const used = creator && u.monthKey === month ? u.monthUploadedBytes : creator ? 0 : u.storedBytes;
-    $('tier-description').textContent = superUser ? '超级无敌美化大师丘 ✦ 站长专属授权，可上传任意类型文件，站内不设额度。' : creator ? '皮卡丘 ♡ 每月可上传 1 GB，旧图永久保留。' : '皮丘 ✿ 总共可保存 200 MB，图片永久保留。';
+    $('tier-description').textContent = superUser ? '超级无敌美化大师丘 ✦ 站长专属授权，可上传任意类型文件，站内不设额度。' : creator ? '皮卡丘 ♡ 每月可上传 1 GB，旧图永久保留。' : u.tier === 'dondon' ? '咚咚鼠 ♡ 总共可保存 500 MB，永久有效，文件长期保留。' : '皮丘 ✿ 总共可保存 200 MB，图片永久保留。';
     $('quota-label').textContent = superUser ? '已保存文件' : creator ? '本月上传额度' : '当前存储额度';
     $('quota-value').textContent = superUser ? fmt(u.storedBytes) : `${fmt(used)} / ${fmt(limit)}`;
     $('quota-bar').style.width = superUser ? '100%' : `${Math.min(100, 100 * used / limit)}%`;

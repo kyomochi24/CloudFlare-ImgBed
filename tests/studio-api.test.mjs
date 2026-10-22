@@ -8,6 +8,7 @@ function environment() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec(readFileSync(new URL('../database/migrations/studio.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../database/migrations/studio-candy.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../database/migrations/studio_quota.sql', import.meta.url), 'utf8'));
   const kvData = new Map();
   const objects = new Map();
   const multipartUploads = new Map();
@@ -17,7 +18,7 @@ function environment() {
     async abort() { multipartUploads.delete(uploadId); }
   });
   const env = {
-    img_d1: { prepare(sql) { return { bind(...args) { const statement = sqlite.prepare(sql); return { async first() { return statement.get(...args) || null; }, async all() { return { results: statement.all(...args) }; }, async run() { return { meta: { changes: statement.run(...args).changes } }; } }; } }; } },
+    img_d1: { prepare(sql) { const bind = (...args) => { const statement = sqlite.prepare(sql); return { async first() { return statement.get(...args) || null; }, async all() { return { results: statement.all(...args) }; }, async run() { return { meta: { changes: statement.run(...args).changes } }; } }; }; return { ...bind(), bind }; } },
     img_url: { async get(key) { return kvData.get(key)?.value ?? null; }, async put(key, value, options = {}) { kvData.set(key, { value, metadata: options.metadata }); }, async delete(key) { kvData.delete(key); }, async getWithMetadata(key) { return kvData.get(key) || null; }, async list() { return { keys: [] }; } },
     img_r2: { async put(key, value) { objects.set(key, value); }, async delete(key) { objects.delete(key); }, async createMultipartUpload(key) { const uploadId = crypto.randomUUID(); multipartUploads.set(uploadId, { key, parts: new Map() }); return { uploadId, ...multipart(key, uploadId) }; }, resumeMultipartUpload: multipart }
   };
@@ -137,6 +138,96 @@ test('Discord login only admits members of a configured guild', async () => {
     const secondGuild = await call(env, `oauth/callback?state=${state}&code=code`, 'GET', null, cookie);
     assert.equal(secondGuild.response.status, 302);
   } finally { globalThis.fetch = previousFetch; sqlite.close(); }
+});
+
+test('Discord meihua role grants permanent dondon without downgrading higher tiers', async () => {
+  const { env, sqlite } = environment();
+  Object.assign(env, { DISCORD_CLIENT_ID: 'client', DISCORD_CLIENT_SECRET: 'secret' });
+  const start = await call(env, 'oauth/start');
+  const authorize = new URL(start.response.headers.get('Location'));
+  assert.ok(authorize.searchParams.get('scope').split(' ').includes('guilds.members.read'));
+  const state = authorize.searchParams.get('state');
+  const stateCookie = `studio_oauth_state=${state}`;
+  const previousFetch = globalThis.fetch;
+  let memberRoles = ['1554356055935295498'];
+  let guildIds = ['1523088539510771802'];
+  let discordId = '444444444444444444';
+  let memberStatus = 200;
+  globalThis.fetch = async (url, options) => {
+    if (String(url).endsWith('/oauth2/token')) return Response.json({ access_token: 'access' });
+    assert.equal(options.headers.Authorization, 'Bearer access');
+    if (String(url).endsWith('/users/@me/guilds')) return Response.json(guildIds.map(id => ({ id })));
+    if (String(url).endsWith('/users/@me')) return Response.json({ id: discordId, username: 'Artist' });
+    assert.equal(String(url), 'https://discord.com/api/v10/users/@me/guilds/1523088539510771802/member');
+    return Response.json({ roles: memberRoles }, { status: memberStatus });
+  };
+  const callback = () => call(env, `oauth/callback?state=${state}&code=code`, 'GET', null, stateCookie);
+  const sessionCookie = response => /studio_session=[^;]+/.exec(response.headers.get('Set-Cookie'))[0];
+  try {
+    const first = await callback();
+    assert.equal(first.response.status, 302);
+    const cookie = sessionCookie(first.response);
+    let profile = await call(env, 'me', 'GET', null, cookie);
+    assert.equal(profile.data.user.tier, 'dondon');
+    assert.equal(profile.data.user.baseLimit, 500 * 1048576);
+    memberRoles = [];
+    assert.equal((await callback()).response.status, 302);
+    assert.equal((await call(env, 'me', 'GET', null, cookie)).data.user.tier, 'dondon');
+    memberRoles = ['1554356055935295498'];
+    const ownerId = profile.data.user.id;
+    sqlite.prepare("UPDATE studio_users SET tier='pikachu' WHERE id=?").run(ownerId);
+    await callback();
+    assert.equal((await call(env, 'me', 'GET', null, cookie)).data.user.tier, 'pikachu');
+    sqlite.prepare('INSERT INTO studio_super_users(user_id) VALUES(?)').run(ownerId);
+    await callback();
+    assert.equal((await call(env, 'me', 'GET', null, cookie)).data.user.tier, 'super');
+    discordId = '555555555555555555';
+    memberRoles = [];
+    const ordinary = await callback();
+    assert.equal((await call(env, 'me', 'GET', null, sessionCookie(ordinary.response))).data.user.tier, 'pichu');
+    discordId = '666666666666666666';
+    guildIds = ['1291925535324110879'];
+    memberRoles = ['1554356055935295498'];
+    const otherGuild = await callback();
+    assert.equal((await call(env, 'me', 'GET', null, sessionCookie(otherGuild.response))).data.user.tier, 'pichu');
+    guildIds = ['1523088539510771802'];
+    memberStatus = 503;
+    assert.equal((await callback()).response.status, 502);
+    assert.equal(sqlite.prepare('SELECT count(*) total FROM studio_dondon_users').get().total, 1);
+  } finally { globalThis.fetch = previousFetch; sqlite.close(); }
+});
+
+test('month display is current for every tier in both profile and admin overview', async () => {
+  const { env, sqlite } = environment();
+  try {
+    const created = await call(env, 'admin/users', 'POST', { username: 'monthly_user', password: 'very-long-password-123' }, 'admin_session=admin-test');
+    const login = await call(env, 'login', 'POST', { username: 'monthly_user', password: 'very-long-password-123' });
+    const cookie = login.response.headers.get('Set-Cookie').split(';')[0];
+    sqlite.prepare("UPDATE studio_users SET month_key='2000-01',month_uploaded_bytes=123 WHERE id=?").run(created.data.id);
+    assert.equal((await call(env, 'me', 'GET', null, cookie)).data.user.monthUploadedBytes, 0);
+    assert.equal((await call(env, 'admin/overview', 'GET', null, 'admin_session=admin-test')).data.users[0].month_uploaded_bytes, 0);
+    assert.equal((await call(env, `admin/users/${created.data.id}`, 'PATCH', { tier: 'dondon' }, cookie)).response.status, 401);
+    assert.equal((await call(env, `admin/users/${created.data.id}`, 'PATCH', { tier: 'dondon' }, 'admin_session=admin-test')).response.status, 200);
+    assert.equal((await call(env, 'me', 'GET', null, cookie)).data.user.tier, 'dondon');
+  } finally { sqlite.close(); }
+});
+
+test('failed upload releases its reservation without changing successful usage', async () => {
+  const { env, sqlite } = environment();
+  try {
+    const created = await call(env, 'admin/users', 'POST', { username: 'failed_upload', password: 'very-long-password-123' }, 'admin_session=admin-test');
+    const login = await call(env, 'login', 'POST', { username: 'failed_upload', password: 'very-long-password-123' });
+    const cookie = login.response.headers.get('Set-Cookie').split(';')[0];
+    const album = (await call(env, 'albums', 'GET', null, cookie)).data.albums[0].id;
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==', 'base64');
+    const form = new FormData(); form.set('albumId', album); form.set('file', new Blob([png], { type: 'image/png' }), 'test.png');
+    env.img_r2.put = async () => { throw new Error('storage unavailable'); };
+    assert.equal((await call(env, 'files', 'POST', form, cookie)).response.status, 500);
+    const user = sqlite.prepare('SELECT stored_bytes,month_uploaded_bytes FROM studio_users WHERE id=?').get(created.data.id);
+    assert.equal(user.stored_bytes, 0);
+    assert.equal(user.month_uploaded_bytes, 0);
+    assert.equal(sqlite.prepare('SELECT count(*) total FROM studio_quota_reservations').get().total, 0);
+  } finally { sqlite.close(); }
 });
 
 test('album deletion clears all batches, objects, metadata, and stored bytes for its owner', async () => {

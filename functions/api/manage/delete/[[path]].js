@@ -2,6 +2,7 @@ import { S3Client, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { purgeCFCache, purgeRandomFileListCache, purgePublicFileListCache } from "../../../utils/purgeCache";
 import { removeFileFromIndex, batchRemoveFilesFromIndex } from "../../../utils/indexManager.js";
 import { getDatabase } from '../../../utils/databaseAdapter.js';
+import { removeStudioFile } from '../../../utils/studioQuota.js';
 import { DiscordAPI } from '../../../utils/storage/discordAPI.js';
 import { HuggingFaceAPI } from '../../../utils/storage/huggingfaceAPI.js';
 import { WebDAVAPI } from '../../../utils/storage/webdavAPI.js';
@@ -138,6 +139,10 @@ export async function deleteFile(env, fileId, cdnUrl, url) {
 
         // 如果文件记录不存在，直接返回成功（幂等删除）
         if (!img) {
+            if (fileId.startsWith('studio/') && env.img_d1?.prepare) {
+                await env.img_r2.delete(fileId);
+                await removeStudioFile(env, fileId);
+            }
             console.warn(`File ${fileId} not found in database, skipping delete`);
             return true;
         }
@@ -171,6 +176,7 @@ export async function deleteFile(env, fileId, cdnUrl, url) {
         // 删除数据库中的记录
         // 注意：容量统计现在由索引自动维护，删除文件后索引更新时会自动重新计算
         await db.delete(fileId);
+        await removeStudioFile(env, fileId, img.metadata?.OwnerId);
 
         // 清除CDN缓存
         await purgeCFCache(env, cdnUrl);

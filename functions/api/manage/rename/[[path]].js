@@ -2,6 +2,7 @@ import { S3Client, CopyObjectCommand, DeleteObjectCommand } from "@aws-sdk/clien
 import { purgeCFCache, purgeRandomFileListCache, purgePublicFileListCache } from "../../../utils/purgeCache";
 import { moveFileInIndex } from "../../../utils/indexManager.js";
 import { getDatabase } from '../../../utils/databaseAdapter.js';
+import { moveStudioFile } from '../../../utils/studioQuota.js';
 import { sanitizeUploadFolder } from "../../../upload/uploadTools.js";
 import { WebDAVAPI } from "../../../utils/storage/webdavAPI.js";
 import {
@@ -167,6 +168,7 @@ export async function onRequest(context) {
 
         // 更新 KV 存储
         await db.put(newFileId, fileData.value, { metadata });
+        await moveStudioFile(env, fileId, newFileId, metadata.OwnerId);
         await db.delete(fileId);
 
         // 清除 CDN 缓存

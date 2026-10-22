@@ -4,17 +4,28 @@
 
 ## 上线前的准备
 
+### 2026-10-21 咚咚鼠与额度统计更新
+
+1. 在维护期间先暂停上传、删除等写入，并等待旧请求结束；再在现有 D1 数据库执行 `database/migrations/studio_quota.sql`，部署本次代码后恢复写入。新触发器不可与旧版计数代码同时处理写入，否则会重复计数。不要删除现有表。新建站点先运行 `studio.sql`，再运行本次迁移。Docker 部署会在启动时自动执行迁移，更新时停止旧容器后启动新版本，避免新旧版本同时写入。
+2. Discord 服务器 `1523088539510771802` 的「美化鼠」角色 ID 为 `1554356055935295498`。用户重新用 Discord 授权登录后，服务端核验该服务器成员角色并永久授予咚咚鼠：累计存储 **500 MiB（页面沿用 MB 标注）**，无到期时间，删除文件释放空间。皮卡丘与超级无敌美化大师丘保持原身份和额度；咚咚鼠的其他工具次数沿用皮丘规则。
+3. OAuth scopes 现为 `identify guilds guilds.members.read`，无需 Bot Token。已有会话不会自动重新核验角色，用户需退出并再次 Discord 登录；领取后不因角色变更自动降级。管理员仍可手动调整站内身份。
+4. 默认允许三个服务器：`1291925535324110879,1379304008157499423,1523088539510771802`。若部署环境已有 `DISCORD_GUILD_IDS`，必须把新服务器 ID 加进去；只允许自己的服务器时设为 `1523088539510771802`。
+5. 迁移根据 `studio_files.size_bytes` 校准每个人当前存储字节，并修正本月统计的可恢复下限；保留已有更高的当月累计上传量，避免退还已删除文件的月额度。历史上已删除且计数也已丢失的上传无法从现有记录还原。迁移不扫描存储桶实际对象，线上数据库与存储桶需另行对账才能确认全部历史数据。
+6. 成功保存文件时，数据库触发器原子更新存储和月上传统计；删除只释放存储，不退本月上传量。并发上传先预留额度，预留不展示为已上传；失败释放预留，中断的预留一小时后失效。原管理后台的单个、批量和文件夹删除也同步个人存储量；移动或重命名文件 ID 同步个人文件记录，额度不变；重复删除不重复扣减。月统计按北京时间自然月展示，后台和个人页面都在跨月后显示新月份。
+
+核验命令：`node --test tests/studio-api.test.mjs tests/studio-quota.test.mjs`。
+
 1. 在 Cloudflare Pages 项目中确认已有 R2 绑定 `img_r2`、原项目的 KV 绑定 `img_url`（或原有数据库绑定）和管理员账号。新用户系统还要求一个 D1 数据库，绑定名必须是 `img_d1`。可以复用原来的 D1；如果原来仅用 KV，可以新建 D1 专供用户系统使用。**不要移除原有 KV 绑定**，旧图片元数据仍在其中。
-2. 首次部署时，在 D1 的控制台执行 [`database/migrations/studio.sql`](database/migrations/studio.sql)。这只创建新的 `studio_` 表，不改原图床记录。也可以用 Wrangler 对对应数据库执行：`npx wrangler d1 execute 数据库名 --remote --file=database/migrations/studio.sql`。**如果你之前已经运行过旧版 `studio.sql`，这次只需要运行 [`database/migrations/studio-super.sql`](database/migrations/studio-super.sql)，已有用户和图片不会被清空。**
-3. 在 [Discord Developer Portal](https://discord.com/developers/applications) 创建应用，到 OAuth2 页面取得 Client ID 和 Client Secret。Redirect URI 填 **`https://771553.xyz/api/studio/oauth/callback`**，需要的 scopes 是 `identify` 和 `guilds`。这里不需要 Discord Bot；皮丘和皮卡丘仅是图床站内等级。
-4. 已将你给的两个 Discord 服务器 ID `1291925535324110879` 与 `1379304008157499423` 设为默认放行范围；加入其中任意一个即可登录。如果今后更换社区，可在 Cloudflare Pages 设置 `DISCORD_GUILD_IDS` 覆盖默认值，多个 ID 用英文逗号隔开。复制服务器 ID 的方法是「用户设置 → 高级 → 开发者模式」，再右键服务器图标。
+2. 首次部署时，在 D1 的控制台执行 [`database/migrations/studio.sql`](database/migrations/studio.sql)，再执行 [`database/migrations/studio_quota.sql`](database/migrations/studio_quota.sql)。也可以用 Wrangler 对对应数据库执行：`npx wrangler d1 execute 数据库名 --remote --file=database/migrations/studio.sql`，然后对本次迁移执行同样命令。已有站点执行 `studio_quota.sql`；如果尚未运行 `studio-super.sql`，先补上该迁移。已有用户和图片不会被清空。
+3. 在 [Discord Developer Portal](https://discord.com/developers/applications) 创建应用，到 OAuth2 页面取得 Client ID 和 Client Secret。Redirect URI 填 **`https://771553.xyz/api/studio/oauth/callback`**，需要的 scopes 是 `identify`、`guilds` 和 `guilds.members.read`。这里不需要 Discord Bot；站内身份按本页规则授予。
+4. 默认放行 Discord 服务器 ID `1291925535324110879`、`1379304008157499423`、`1523088539510771802`；加入其中任意一个即可登录。可在 Cloudflare Pages 设置 `DISCORD_GUILD_IDS` 覆盖默认值，多个 ID 用英文逗号隔开。复制服务器 ID 的方法是「用户设置 → 高级 → 开发者模式」，再右键服务器图标。
 5. 在 Cloudflare Pages → 项目 → 设置 → 变量和机密中配置：
 
    | 名称 | 类型 | 值 |
    | --- | --- | --- |
    | `DISCORD_CLIENT_ID` | 文本 | Discord 应用 Client ID |
    | `DISCORD_CLIENT_SECRET` | 机密 | Discord 应用 Client Secret |
-   | `DISCORD_GUILD_IDS` | 文本，可选 | 覆盖默认的两个服务器 ID；多个用逗号隔开 |
+   | `DISCORD_GUILD_IDS` | 文本，可选 | 覆盖默认的三个服务器 ID；多个用逗号隔开 |
    | `STUDIO_IMPORT_HOSTS` | 文本，可选 | 额外允许导入的图片来源域名；内置 `iili.io,i.postimg.cc,img.baidu.re` |
 
 6. 提交代码到连接 Cloudflare Pages 的仓库，确认项目构建输出目录仍为 `frontend-dist`。部署完成后，在浏览器依次验证 `/studio/`、`/studio/admin.html` 和原后台 `/dashboard`。
