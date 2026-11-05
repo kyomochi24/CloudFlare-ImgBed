@@ -1,9 +1,16 @@
-export function initMusic({ api, state, refreshProfile, refreshAlbums, notice }) {
+export function initMusic({ api: studioApi, state, refreshProfile, refreshAlbums, notice }) {
   const $ = id => document.getElementById(id);
   const root = $('music-card');
   if (!root) return { refresh() {}, updateAlbum() {}, reset() {} };
   const escape = value => String(value ?? '').replace(/[&<>"']/g, x => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[x]);
   const post = data => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  async function api(path, options) {
+    try { return await studioApi(path, options); }
+    catch (error) {
+      if (/^请求失败 \((502|503|504)\)$/.test(error.message)) throw new Error('音乐服务连接异常，请稍后重试；如果持续出现，请检查音乐 Worker 的运行日志。');
+      throw error;
+    }
+  }
   let tracks = [], searchVersion = 0, previewVersion = 0, activeId = '', searchEnabled = false;
   let saving = false, uploading = false, lifecycle = 0;
   const saved = new Map();

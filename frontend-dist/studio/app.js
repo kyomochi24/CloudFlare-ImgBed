@@ -1,4 +1,4 @@
-import { initMusic } from './music.js?v=20261105music1';
+import { initMusic } from './music.js?v=20261106music3';
 import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=20261015a';
 import { initStudioTools } from './tools.js?v=20260922j';
 import { initCandy } from './candy.js?v=20261105a';

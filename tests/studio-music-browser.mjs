@@ -25,7 +25,7 @@ try {
   page.on('pageerror',e=>errors.push(device+': '+e.message));
   await page.route('https://**',r=>r.abort());
   await page.addInitScript(()=>{Object.defineProperty(navigator,'clipboard',{value:{writeText:async value=>{window.copied=value;}}});});
-  let enabled=true,searchCalls=0,saveCalls=0,failSearch=false,releaseSave,waitingSave;
+  let enabled=true,searchCalls=0,saveCalls=0,failSearch=false,failListen=false,releaseSave,waitingSave;
   const records=[];
   await page.route('**/api/studio/**',async route=>{
    const req=route.request(),u=new URL(req.url()),path=u.pathname.slice('/api/studio/'.length);
@@ -39,7 +39,7 @@ try {
    else if(path.endsWith('/quota'))result={used:0,dailyLimit:3,remaining:3,batchLimit:2};
    else if(path==='music/status')result={searchEnabled:enabled};
    else if(path==='music/search'){searchCalls++;if(failSearch){status=502;result={error:'音乐平台暂时不可用'};}else result={tracks:data.q==='没有结果'?[]:[{id:'123',source:'netease',title:'测试旋律 <script>',artist:'演示音乐人',album:'午后的故事'},{id:'456',source:'netease',title:'另一段旋律',artist:'演示音乐人',album:'微风'}]};}
-   else if(path==='music/resolve')result={url:origin+'/file/test-tone.mp3',track:{id:'123',source:'netease'}};
+   else if(path==='music/resolve'){if(failListen){await route.fulfill({status:502,contentType:'text/html',body:'<html>Cloudflare Bad gateway</html>'});return;}result={url:origin+'/file/test-tone.mp3',track:{id:'123',source:'netease'}};}
    else if(path==='music/save'||path==='music/upload'){
     saveCalls++;if(waitingSave)await waitingSave;
     const albumId=path==='music/save'?data.albumId:'b';const id='studio/test-'+saveCalls+'.mp3';
@@ -55,6 +55,7 @@ try {
   assert.equal(searchCalls,1);assert.equal(await page.locator('.music-track').count(),2);assert.equal(await page.locator('#music-results script').count(),0);
   await page.locator('[data-listen="0"]').click();await page.waitForFunction(()=>document.getElementById('music-audio').currentTime>0);
   await page.locator('#music-stop').click();assert.equal(await page.locator('#music-audio').getAttribute('src'),null);
+  failListen=true;await page.locator('[data-listen="0"]').click();await page.waitForFunction(()=>document.getElementById('music-status').textContent.includes('音乐服务连接异常'));failListen=false;
   waitingSave=new Promise(r=>releaseSave=r);
   await page.locator('[data-save="0"]').click();
   assert.equal(await page.locator('[data-save="1"]').isDisabled(),true);

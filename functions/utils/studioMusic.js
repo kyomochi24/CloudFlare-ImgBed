@@ -1,7 +1,7 @@
 import { AUDIO_LIMIT, isMP3 } from './studioAudio.js';
 
 const json = (data, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
-class MusicError extends Error { constructor(message, status = 400) { super(message); this.status = status; } }
+class MusicError extends Error { constructor(message, status = 400, code) { super(message); this.status = status; this.code = code; } }
 async function readBounded(response, max, message) {
   if (Number(response.headers.get('Content-Length')) > max) throw new MusicError(message, 413);
   const reader = response.body?.getReader(); const chunks = []; let size = 0;
@@ -37,7 +37,7 @@ async function service(env, path, body) {
   const response = await fetch(url, { method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.MUSIC_API_TOKEN}` }, body: JSON.stringify(body), signal: AbortSignal.timeout(35000) });
   const bytes = await readBounded(response, 1024 * 1024, '音乐服务返回内容过大');
   let data; try { data = JSON.parse(new TextDecoder().decode(bytes)); } catch { throw new MusicError('音乐服务返回格式错误', 502); }
-  if (!response.ok) throw new MusicError(response.status === 401 ? '音乐服务密钥不匹配，请联系站长' : String(data.error || '音乐平台暂时不可用').slice(0, 240), 502);
+  if (!response.ok) throw new MusicError(response.status === 401 ? '音乐服务密钥不匹配，请联系站长' : String(data.error || '音乐平台暂时不可用').slice(0, 240), [404,422,429].includes(response.status) ? response.status : 502, data.code);
   return data;
 }
 async function resolve(env, id) {
@@ -107,6 +107,6 @@ export async function handleStudioMusic(context, db, user, route, method, { save
     const name = `${result.track.title} - ${result.track.artist}`.replace(/[<>:"/\\|?*\x00-\x1f]/g, '').slice(0, 90) + '.mp3';
     return saveFile(albumId, { bytes, type: 'audio/mpeg', name, sourceUrl });
   } catch (error) {
-    return json({ error: error instanceof MusicError ? error.message : '音乐服务连接失败，请稍后再试' }, error.status || 502);
+    return json({ error: error instanceof MusicError ? error.message : '音乐服务连接失败，请稍后再试', code: error.code }, error.status || 502);
   }
 }

@@ -13,6 +13,11 @@ async function musicUser() {
   state.albumId = (await call(state.env, 'albums', 'GET', null, state.cookie)).data.albums[0].id;
   return state;
 }
+test('missing audio preserves its 422 reason through preview and save without storing a file',async()=>{
+ const {env,cookie,albumId,sqlite,objects}=await musicUser();Object.assign(env,{MUSIC_API_URL:'https://music-worker.workers.dev',MUSIC_API_TOKEN:'a-test-secret-at-least-32-characters'});
+ const previous=globalThis.fetch;globalThis.fetch=async()=>Response.json({error:'平台暂未提供可播放音源',code:'NO_AUDIO'},{status:422});
+ try{for(const route of ['resolve','save']){const r=await call(env,'music/'+route,'POST',{id:'123',albumId},cookie);assert.equal(r.response.status,422);assert.equal(r.data.code,'NO_AUDIO');assert.equal(r.data.error,'平台暂未提供可播放音源');}assert.equal(objects.size,0);assert.equal(sqlite.prepare('SELECT count(*) n FROM studio_files').get().n,0);}finally{globalThis.fetch=previous;sqlite.close();}
+});
 test('music requires a member session, same origin and service configuration; local MP3 still works', async () => {
   const { env, cookie, albumId, sqlite, objects } = await musicUser();
   assert.equal((await call(env,'music/status')).response.status,401);
