@@ -1,7 +1,7 @@
-import { initMusic } from './music.js?v=20261106music3';
+import { initMusic } from './music.js?v=20261106video1';
 import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=20261015a';
 import { initStudioTools } from './tools.js?v=20260922j';
-import { initCandy } from './candy.js?v=20261105a';
+import { initCandy } from './candy.js?v=20261106bottom1';
 import { initFontTool } from './font-tool.js?v=20260928-font3';
 
 (() => {

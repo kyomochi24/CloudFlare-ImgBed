@@ -42,6 +42,14 @@ window.createWorkshopUI = function(tell) {
  const extensions=document.createElement('div');extensions.id='extensionsMenu';extensions.className='font-family-reset';extensions.hidden=true;
  extensions.innerHTML=action('sd_gen','fa-paintbrush','生成图片')+action('tts_menu','fa-volume-high','朗读 / 语音')+action('attachFile','fa-paperclip','附加文件')+action('qr--popoutTrigger','fa-bolt','快捷回复');document.body.append(extensions);
  const qr=document.createElement('div');qr.id='qr--bar';qr.className='qr--bar';qr.hidden=true;qr.innerHTML='<div class="qr--buttons"><button type="button" class="qr--button menu_button">继续故事</button><button type="button" class="qr--button menu_button">换个话题</button><button type="button" class="qr--button menu_button">慢慢说</button></div>';$('send_form').prepend(qr);
+ const rocket=document.createElement('div');rocket.id='quick-reply-rocket-button';rocket.className='fa-solid fa-face-smile interactable';rocket.title='QR 助手';rocket.setAttribute('role','button');rocket.setAttribute('aria-label','QR 助手');rocket.tabIndex=0;$('rightSendForm').prepend(rocket);
+ const helper=document.createElement('div');helper.id='input_helper_toolbar';helper.setAttribute('aria-label','输入辅助工具栏');
+ const macros=document.createElement('div');macros.className='input_helper_macros';
+ for(const [label,before,after]of [['**','**','**'],['""','"','"'],['()','(',')'],['「」','「','」'],['『』','『','』'],['《》','《','》'],['↵','\n',''],['{{U}}','{{user}}',''],['{{C}}','{{char}}','']]){
+  const button=document.createElement('button');button.type='button';button.className='input_helper_button menu_button';button.textContent=label;button.dataset.helperBefore=before;button.dataset.helperAfter=after;button.title='插入 '+label;(label.startsWith('{{')?macros:helper).append(button);
+ }
+ helper.append(macros);
+ $('nonQRFormItems').before(helper);
  const popup=document.createElement('dialog');popup.id='workshop-popup';popup.className='popup';popup.setAttribute('aria-labelledby','workshop-popup-title');popup.innerHTML='<div class="popup-body"><h3 id="workshop-popup-title"></h3><div id="workshop-popup-content"></div><div class="popup-controls"><button type="button" class="menu_button" data-workshop-popup-close>返回预览</button></div></div>';document.body.append(popup);
  const feedback=document.createElement('div');feedback.id='workshop-feedback';feedback.setAttribute('role','status');feedback.hidden=true;document.body.append(feedback);let feedbackTimer;
  function hint(text){feedback.textContent=text;feedback.hidden=false;clearTimeout(feedbackTimer);feedbackTimer=setTimeout(()=>feedback.hidden=true,2600)}
@@ -70,7 +78,7 @@ window.createWorkshopUI = function(tell) {
    sd_gen:['生成图片','<label>画面提示词<textarea class="text_pole" rows="4">窗边的甜品与一杯温热的茶</textarea></label><button type="button" class="menu_button" data-workshop-demo>生成图片</button>'],
    tts_menu:['朗读 / 语音','<label>声音<select class="text_pole"><option>温柔的声音</option></select></label><label>语速<input type="range" min=".5" max="2" step=".1" value="1"></label>'],
    attachFile:['附加文件','<div class="file_attached"><i class="fa-solid fa-file-alt"></i><span class="file_name">示例笔记.txt</span><span class="file_size">1 KB</span></div>'],
-   'qr--popoutTrigger':['快捷回复','<div class="qr--buttons"><button type="button" class="qr--button menu_button" data-workshop-demo>继续故事</button><button type="button" class="qr--button menu_button" data-workshop-demo>换个话题</button></div>']
+   'qr--popoutTrigger':['QR 助手','<p class="workshop-note">快捷回复外观示例 · 点击填入输入框，不会发送消息。</p><div class="qr--buttons"><button type="button" class="qr--button menu_button">继续故事</button><button type="button" class="qr--button menu_button">换个话题</button></div>']
   };
   const found=dialogs[id];if(found)show(...found);else hint('这是外观预览，此操作不会调用模型或改动聊天。');
  }
@@ -81,8 +89,7 @@ window.createWorkshopUI = function(tell) {
   const ids=runtime==='tauritavern'?['tauritavern-icons','tauritavern-style','tauritavern-mobile','tauritavern-oled']:['sillytavern-style','sillytavern-mobile'];
   for(const id of ['sillytavern-style','sillytavern-mobile','tauritavern-icons','tauritavern-style','tauritavern-mobile','tauritavern-oled'])$(id).media=ids.includes(id)?'all':'not all';
   $('tauritavern_settings').hidden=runtime!=='tauritavern';
-  for(const id of ['mes_continue','mes_impersonate'])$(id).classList.toggle('displayNone',sample.composerActions===false);
-  document.body.classList.toggle('workshop-composer-actions',sample.composerActions!==false);
+  helper.hidden=sample.inputHelper===false;
   qr.hidden=!sample.quickReplies;
   const script=['running','paused'].includes(sample.scriptState)?sample.scriptState:'idle';
   $('form_sheld').classList.toggle('isExecutingCommandsFromChatInput',script!=='idle');$('form_sheld').classList.toggle('script_paused',script==='paused');
@@ -97,9 +104,11 @@ window.createWorkshopUI = function(tell) {
   if(target.closest('[data-workshop-demo]')){hint('示例控件 · 不会发送请求');return true}
   const toggle=target.closest('.drawer-toggle');if(toggle){const id=toggle.getAttribute('aria-controls');active===id?close():open(id);return true}
   if(target.closest('.workshop-close')){close();return true}
+  if(target.closest('#quick-reply-rocket-button')){dialogFor('qr--popoutTrigger');return true}
+  const helperButton=target.closest('[data-helper-before]');if(helperButton){const textarea=$('send_textarea'),start=textarea.selectionStart,end=textarea.selectionEnd,before=helperButton.dataset.helperBefore,after=helperButton.dataset.helperAfter;textarea.setRangeText(before+textarea.value.slice(start,end)+after,start,end,'end');textarea.setSelectionRange(start+before.length,end+before.length);textarea.focus();textarea.dispatchEvent(new Event('input'));return true}
   const shortcut=target.closest('#options_button,#extensionsMenuButton');if(shortcut){const id=shortcut.id==='options_button'?'options':'extensionsMenu';active===id?close():open(id);return true}
   const item=target.closest('#options a,#extensionsMenu a,[data-preview-dialog]');if(item){dialogFor(item.dataset.previewDialog||item.id);return true}
-  if(target.closest('.qr--button')){const textarea=$('send_textarea');textarea.value=target.closest('.qr--button').textContent;textarea.dispatchEvent(new Event('input'));return true}
+  if(target.closest('.qr--button')){const textarea=$('send_textarea');textarea.value=target.closest('.qr--button').textContent;textarea.dispatchEvent(new Event('input'));if(popup.open)popup.close();return true}
   if(target.closest('#send_but,#mes_stop,#mes_continue,#mes_impersonate,.stscript_btn')){hint('仅预览按钮状态，不会发送消息或运行脚本。');return true}
   if(active&&!target.closest('.drawer-content,#options,#extensionsMenu'))close();
   return false;

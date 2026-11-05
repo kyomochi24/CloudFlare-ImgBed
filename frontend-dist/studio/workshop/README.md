@@ -69,3 +69,7 @@ Tests:
     node tests/workshop-preview-browser.mjs
 
 Browser tests require Playwright and Chromium. Set PLAYWRIGHT_MODULE to an installed module URL and CHROME_PATH to an existing Chrome executable if needed. SCREENSHOT_DIR optionally saves screenshots. To serve locally: node tests/workshop-preview-server.mjs, then open its printed URL.
+
+## 2026-11-06 · Composer correction
+
+Removed the two continue/impersonate composer nodes and their UI switch. Legacy composerActions is normalized to false. Added the theme-compatible quick-reply-rocket-button QR assistant sample and input_helper_toolbar; it inserts local text only. Existing menu actions remain appearance samples.

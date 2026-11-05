@@ -1,3 +1,4 @@
+import { initVideoMP3 } from './video-mp3.js?v=20261106video1';
 export function initMusic({ api: studioApi, state, refreshProfile, refreshAlbums, notice }) {
   const $ = id => document.getElementById(id);
   const root = $('music-card');
@@ -15,6 +16,9 @@ export function initMusic({ api: studioApi, state, refreshProfile, refreshAlbums
   let saving = false, uploading = false, lifecycle = 0;
   const saved = new Map();
   const player = $('music-audio');
+  const videoRoot = $('video-mp3');
+  const video = videoRoot ? initVideoMP3({ root: videoRoot, upload: uploadLocal, stopOtherAudio: () => { stop(); render(); } }) : null;
+  player.addEventListener('play', () => $('video-audio')?.pause());
   function message(text, error = false) { $('music-status').textContent = text; $('music-status').classList.toggle('music-error', error); }
   function updateAlbum() {
     $('music-album').textContent = state.albums.find(x => x.id === state.albumId)?.name || '请先新建相册';
@@ -111,6 +115,9 @@ export function initMusic({ api: studioApi, state, refreshProfile, refreshAlbums
   player.addEventListener('error', () => { if (player.getAttribute('src')) message('试听链接可能已过期，请点「重新试听」；保存后的本站链接可直接使用。', true); });
   $('music-local-input').addEventListener('change', async event => {
     const file = event.target.files?.[0]; event.target.value = '';
+    await uploadLocal(file);
+  });
+  async function uploadLocal(file) {
     if (!file || uploading) return;
     if (!/\.mp3$/i.test(file.name)) { message('请选择 MP3 文件。', true); return; }
     if (!file.size || file.size > 25 * 1048576) { message('请选择 25 MB 以内的 MP3。', true); return; }
@@ -121,12 +128,12 @@ export function initMusic({ api: studioApi, state, refreshProfile, refreshAlbums
     try {
       const result = await api('music/upload', { method: 'POST', body: form });
       if (owner !== lifecycle) return;
-      showSaved(result, albumName); message('本地 MP3 已保存，可以复制 BGM 链接。'); await syncAfterSave();
+      showSaved(result, albumName); message('本地 MP3 已保存，可以复制 BGM 链接。'); await syncAfterSave(); return result;
     } catch (error) { if (owner === lifecycle) message(error.message, true); }
     finally { uploading = false; $('music-local-input').disabled = false; }
-  });
+  }
   function reset() {
-    lifecycle++; searchVersion++; stop(); tracks = []; saved.clear(); $('music-saved').hidden = true;
+    lifecycle++; searchVersion++; stop(); video?.reset(); tracks = []; saved.clear(); $('music-saved').hidden = true;
     $('music-query').value = ''; root.removeAttribute('aria-busy'); render();
   }
   render();

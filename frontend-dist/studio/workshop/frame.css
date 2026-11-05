@@ -29,8 +29,7 @@ body.workshop-inspect *{cursor:crosshair!important}[data-workshop-hover]{outline
 #options,#extensionsMenu{max-width:calc(100vw - 16px);max-height:calc(100dvh - 110px);overflow-y:auto}
 #extensionsMenu{position:fixed;left:max(8px,calc((100vw - var(--sheldWidth))/2 + 40px));bottom:var(--bottomFormBlockSize);z-index:4000;display:flex;flex-direction:column;gap:7px;padding:12px;border:1px solid var(--SmartThemeBorderColor);border-radius:10px;background:var(--SmartThemeBlurTintColor);min-width:180px}
 #extensionsMenu a{display:flex;align-items:center;gap:10px;padding:6px;cursor:pointer}
-body.workshop-composer-actions #rightSendForm>:is(#mes_continue,#mes_impersonate){display:flex}
-body.workshop-generating #rightSendForm>:is(#send_but,#mes_continue,#mes_impersonate){display:none}
+body.workshop-generating #rightSendForm>#send_but{display:none}
 body.workshop-generating #rightSendForm>#mes_stop{display:flex}
 #qr--bar{width:100%;order:0}.qr--buttons{display:flex;flex-wrap:wrap;gap:5px;padding:6px}.qr--button{font:inherit;font-size:.85em}
 #workshop-popup{width:min(520px,calc(100vw - 24px));max-height:calc(100dvh - 32px);overflow:auto;color:var(--SmartThemeBodyColor);background:var(--SmartThemeBlurTintColor);border:1px solid var(--SmartThemeBorderColor);border-radius:12px;padding:18px}
@@ -40,3 +39,10 @@ body.workshop-generating #rightSendForm>#mes_stop{display:flex}
 #workshop-feedback{position:fixed;left:50%;bottom:calc(var(--bottomFormBlockSize) + 14px);transform:translateX(-50%);max-width:calc(100vw - 24px);z-index:1000001;padding:10px 14px;border-radius:9px;background:var(--SmartThemeBlurTintColor);border:1px solid var(--SmartThemeBorderColor);font-size:12px;box-shadow:0 4px 20px #0003;pointer-events:none}
 @media(max-width:450px){.workshop-backgrounds{gap:5px}.workshop-backgrounds .bg_example{height:85px}#leftSendForm,#rightSendForm{flex-shrink:0}.drawer-content{padding:12px}}
 
+
+/* Composer extension samples use the selectors present in imported themes. */
+#quick-reply-rocket-button{cursor:pointer;flex-shrink:0}
+#input_helper_toolbar{width:100%;display:flex;justify-content:center;flex-wrap:wrap;gap:6px;padding:7px 5px;box-sizing:border-box}
+#input_helper_toolbar[hidden]{display:none!important}
+.input_helper_macros{display:flex;flex-basis:100%;justify-content:center;gap:6px}
+#input_helper_toolbar button{font:inherit;min-width:29px;min-height:29px;margin:0;padding:5px 8px;border:1px solid var(--SmartThemeBorderColor);border-radius:9px;background:var(--SmartThemeBlurTintColor);color:var(--SmartThemeBodyColor);cursor:pointer}

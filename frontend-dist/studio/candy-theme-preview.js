@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import {DEFAULT_THEME, DEFAULT_SAMPLE} from './workshop/core.mjs?v=20261105a';
+import {DEFAULT_THEME, DEFAULT_SAMPLE} from './workshop/core.mjs?v=20261106bottom1';
 
 export function initCandyThemePreview({buildSnapshot, notice}) {
   const find = id => document.getElementById('candy-theme-preview-' + id);
@@ -34,7 +34,7 @@ export function initCandyThemePreview({buildSnapshot, notice}) {
   async function boot(version) {
     if (channel) return;
     if (!template) {
-      const response = await fetch(new URL('frame.html?v=20261105a',base));
+      const response = await fetch(new URL('frame.html?v=20261106bottom1',base));
       if (!response.ok) throw new Error('工坊预览资源读取失败，请确认 workshop 文件夹已上传');
       template = await response.text();
     }

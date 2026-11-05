@@ -3,7 +3,7 @@ export const DEFAULT_THEME = {
  name:'我的酒馆美化', custom_css:'/* 丘丘美化工坊 · 写下你的美化 CSS */\n\n/* 例如：修改角色姓名颜色\n#chat .mes[is_user="false"] .name_text {\n  color: #4DD0E1;\n}\n*/\n',
  main_text_color:'rgba(220,220,210,1)',italics_text_color:'rgba(145,145,145,1)',underline_text_color:'rgba(188,231,207,1)',quote_text_color:'rgba(225,138,36,1)',blur_tint_color:'rgba(23,23,23,1)',chat_tint_color:'rgba(23,23,23,1)',user_mes_blur_tint_color:'rgba(0,0,0,0.3)',bot_mes_blur_tint_color:'rgba(60,60,60,0.3)',shadow_color:'rgba(0,0,0,0.5)',border_color:'rgba(0,0,0,0.5)',blur_strength:10,shadow_width:2,font_scale:1,chat_width:100,chat_display:0,avatar_style:0,fast_ui_mode:false,noShadows:false,waifuMode:false,timer_enabled:true,timestamps_enabled:true,mesIDDisplay_enabled:true,message_token_count_enabled:true,hideChatAvatars_enabled:false,expand_message_actions:false
 };
-export const DEFAULT_SAMPLE={userName:'你',charName:'浅浅丘',userText:'我想把今天的心情，做成一份新的美化。\n\n你觉得粉色和蓝色怎么样？',charText:'当然可以，我们慢慢来。\n\n*窗边的光落在桌上，像一小块融化的奶油。*\n\n**这是加粗文字**，<u>这是下划线文字</u>。\n\n> “把喜欢的样子留在这里。”\n\n---\n\n```css\n.name_text { color: #4DD0E1; }\n```',userAvatar:'',charAvatar:'',background:'',count:2,generating:false,scene:'chat',runtime:'sillytavern',oled:false,composerActions:true,quickReplies:false,scriptState:'idle'};
+export const DEFAULT_SAMPLE={userName:'你',charName:'浅浅丘',userText:'我想把今天的心情，做成一份新的美化。\n\n你觉得粉色和蓝色怎么样？',charText:'当然可以，我们慢慢来。\n\n*窗边的光落在桌上，像一小块融化的奶油。*\n\n**这是加粗文字**，<u>这是下划线文字</u>。\n\n> “把喜欢的样子留在这里。”\n\n---\n\n```css\n.name_text { color: #4DD0E1; }\n```',userAvatar:'',charAvatar:'',background:'',count:2,generating:false,scene:'chat',runtime:'sillytavern',oled:false,composerActions:false,inputHelper:true,quickReplies:false,scriptState:'idle'};
 export function freshProject(){return {kind:'qiuqiu-workshop',version:1,theme:structuredClone(DEFAULT_THEME),sample:structuredClone(DEFAULT_SAMPLE),viewport:{width:390,height:844,zoom:'fit'}};}
 const object=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 export function parseImport(text,fileName='theme.json'){
@@ -14,6 +14,7 @@ export function parseImport(text,fileName='theme.json'){
   if(obj.version!==1||!object(obj.theme)||typeof obj.theme.custom_css!=='string')throw new Error('工程格式或版本不受支持。');
   const p=freshProject();p.theme=structuredClone(obj.theme);
   if(object(obj.sample)){for(const k of Object.keys(p.sample)){if(typeof obj.sample[k]===typeof p.sample[k])p.sample[k]=obj.sample[k];}}
+  p.sample.composerActions=false;
   p.sample.count=[1,2,4].includes(p.sample.count)?p.sample.count:2;p.sample.scene=['chat','preloader','loader'].includes(p.sample.scene)?p.sample.scene:'chat';
   p.sample.runtime=['sillytavern','tauritavern'].includes(p.sample.runtime)?p.sample.runtime:'sillytavern';p.sample.scriptState=['idle','running','paused'].includes(p.sample.scriptState)?p.sample.scriptState:'idle';
   if(object(obj.viewport)){p.viewport=normalizeViewport(obj.viewport)}
