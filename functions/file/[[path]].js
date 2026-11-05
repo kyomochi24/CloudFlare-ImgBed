@@ -9,6 +9,7 @@ import {
     returnWithCheck, return404, returnBlockImg, isDomainAllowed, FILE_CACHE_CONTROL
 } from './fileTools';
 import { getDatabase } from '../utils/databaseAdapter.js';
+import { serveStudioAudio } from '../utils/studioAudio.js';
 import { authenticate, AUTH_SCOPE } from '../utils/auth/authCore.js';
 import {
     resolveDiscordCredentials,
@@ -108,6 +109,9 @@ export async function onRequest(context) {  // Contents of context object
 
     /* Cloudflare R2渠道 */
     if (imgRecord.metadata?.Channel === 'CloudflareR2') {
+        if (fileId.startsWith('studio/') && fileType === 'audio/mpeg') {
+            return serveStudioAudio(env.img_r2, fileId, request, encodedFileName, getFileCacheControl(context));
+        }
         const response = await handleR2File(context, fileId, encodedFileName, fileType);
         if (fileId.startsWith('studio/') && !['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp', 'font/ttf', 'font/otf', 'font/woff', 'font/woff2'].includes(fileType) && response.status < 400) {
             const headers = new Headers(response.headers);
@@ -1122,3 +1126,4 @@ function getWebDAVPublicFileUrl(webdavCredentials, filePath) {
 
     return '';
 }
+

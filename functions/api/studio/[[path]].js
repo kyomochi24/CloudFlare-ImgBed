@@ -3,6 +3,8 @@ import { addFileToIndex, removeFileFromIndex } from '../../utils/indexManager.js
 import { hashPassword, verifyPassword } from '../../utils/auth/passwordHash.js';
 import { validateSession } from '../../utils/auth/sessionManager.js';
 import { reserveStudioQuota, releaseStudioQuota } from '../../utils/studioQuota.js';
+import { isMP3 } from '../../utils/studioAudio.js';
+import { handleStudioMusic } from '../../utils/studioMusic.js';
 
 const BASE_LIMIT = 200 * 1024 * 1024;
 const DONDON_LIMIT = 500 * 1024 * 1024;
@@ -200,8 +202,8 @@ function actualFontType(bytes, expectedLength = bytes.length) {
   }
   return null;
 }
-async function sourceRateLimited(db, userId) {
-  const key = await sha(`studio-source:${userId}`), now = Date.now(), windowMs = 10 * 60 * 1000, limit = 120;
+async function sourceRateLimited(db, userId, scope = 'source') {
+  const key = await sha(`studio-${scope}:${userId}`), now = Date.now(), windowMs = 10 * 60 * 1000, limit = 120;
   const attempt = await db.prepare('SELECT window_start,attempts FROM studio_login_attempts WHERE key=?').bind(key).first();
   if (attempt && now - attempt.window_start < windowMs && attempt.attempts >= limit) return true;
   await db.prepare('INSERT INTO studio_login_attempts(key,window_start,attempts) VALUES(?,?,1) ON CONFLICT(key) DO UPDATE SET window_start=CASE WHEN ?-window_start>=? THEN ? ELSE window_start END,attempts=CASE WHEN ?-window_start>=? THEN 1 ELSE attempts+1 END')
@@ -269,12 +271,17 @@ async function saveImage(context, db, user, albumId, file) {
   if (!env.img_r2?.put) return fail('R2 存储桶未绑定为 img_r2', 503);
   const album = await db.prepare('SELECT id FROM studio_albums WHERE id=? AND user_id=?').bind(albumId, user.id).first();
   if (!album) return fail('相册不存在', 404);
-  const { bytes, type, name, sourceUrl } = file;
+  const { bytes, name, sourceUrl } = file;
+  let type = file.type;
+  const claimsMP3 = type === 'audio/mpeg' || type === 'audio/mp3' || /\.mp3$/i.test(name);
+  const validMP3 = claimsMP3 && isMP3(bytes);
+  if (claimsMP3 && !validMP3) return fail('这个文件不是有效的 MP3', 400);
+  if (validMP3) type = 'audio/mpeg';
   const fontType = actualFontType(bytes);
   const fontExtension = FONT_TYPES[fontType];
   const validFont = fontType === type && cleanName(name).toLowerCase().endsWith(`.${fontExtension}`);
-  if (bytes.byteLength < 1 || bytes.byteLength > SINGLE_FILE_LIMIT || (!user.is_super && !(IMAGE_TYPES.has(type) && actualImageType(bytes) === type) && !validFont)) return fail('普通账号只接受 25 MB 以内的图片或有效的 TTF、OTF、WOFF、WOFF2 字体', 400);
-  const extension = user.is_super ? (cleanName(name).match(/\.([a-z0-9]{1,10})$/i)?.[1] || 'bin').toLowerCase() : fontExtension || EXTENSIONS[type];
+  if (bytes.byteLength < 1 || bytes.byteLength > SINGLE_FILE_LIMIT || (!user.is_super && !(IMAGE_TYPES.has(type) && actualImageType(bytes) === type) && !validFont && !validMP3)) return fail('普通账号接受 25 MB 以内的图片、有效字体或 MP3 音频', 400);
+  const extension = validMP3 ? 'mp3' : user.is_super ? (cleanName(name).match(/\.([a-z0-9]{1,10})$/i)?.[1] || 'bin').toLowerCase() : fontExtension || EXTENSIONS[type];
   const id = shortObjectKey(extension);
   if (!await reserve(db, user, id, bytes.byteLength)) return fail('上传额度不足', 403);
   const metadata = studioMetadata(request, user, album, cleanName(name) || `file.${extension}`, type, bytes.byteLength);
@@ -371,6 +378,10 @@ async function multipart(context, db, user, route, method) {
 }
 async function handleUser(context, db, user, route, method) {
   const { request, env } = context;
+  if (route.startsWith('music/')) return handleStudioMusic(context, db, user, route, method, {
+    saveFile: (albumId, file) => saveImage(context, db, user, albumId, file),
+    rateLimited: () => sourceRateLimited(db, user.id, 'music')
+  });
   if (route.startsWith('bg0-model/')) {
     if (method !== 'GET') return fail('请求方法无效', 405);
     const file = route.startsWith(BG0_MODEL_PREFIX) ? route.slice(BG0_MODEL_PREFIX.length) : '';

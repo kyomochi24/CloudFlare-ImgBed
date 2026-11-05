@@ -4,6 +4,81 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { onRequest } from '../functions/api/studio/[[path]].js';
 
+const musicMP3 = readFileSync(new URL('./fixtures/music-tone.mp3', import.meta.url));
+async function musicUser() {
+  const state = environment();
+  await call(state.env, 'admin/users', 'POST', { username: 'music_user', password: 'music-user-test-password' }, 'admin_session=admin-test');
+  const login = await call(state.env, 'login', 'POST', { username: 'music_user', password: 'music-user-test-password' });
+  state.cookie = login.response.headers.get('Set-Cookie').split(';')[0];
+  state.albumId = (await call(state.env, 'albums', 'GET', null, state.cookie)).data.albums[0].id;
+  return state;
+}
+test('music requires a member session, same origin and service configuration; local MP3 still works', async () => {
+  const { env, cookie, albumId, sqlite, objects } = await musicUser();
+  assert.equal((await call(env,'music/status')).response.status,401);
+  assert.equal((await call(env,'music/status','GET',null,cookie)).data.searchEnabled,false);
+  assert.equal((await call(env,'music/search','POST',{q:'piano'},cookie)).response.status,503);
+  const cross=await onRequest({env,request:new Request('https://example.test/api/studio/music/search',{method:'POST',headers:{Origin:'https://evil.test',Cookie:cookie},body:'{}'}),waitUntil(){}});
+  assert.equal(cross.status,403);
+  const form=new FormData();form.set('albumId',albumId);form.set('file',new Blob([musicMP3],{type:'application/octet-stream'}),'my-audio.mp3');
+  const uploaded=await call(env,'music/upload','POST',form,cookie);
+  assert.equal(uploaded.response.status,200);assert.match(uploaded.data.url,/\.mp3$/);assert.equal(objects.size,1);
+  const row=sqlite.prepare('SELECT mime_type,size_bytes FROM studio_files').get();assert.equal(row.mime_type,'audio/mpeg');assert.equal(row.size_bytes,musicMP3.length);
+  assert.equal((await call(env,'me','GET',null,cookie)).data.user.storedBytes,musicMP3.length);
+  const fake=new FormData();fake.set('albumId',albumId);fake.set('file',new Blob(['ID3 forged HTML'],{type:'audio/mpeg'}),'fake.mp3');
+  assert.equal((await call(env,'music/upload','POST',fake,cookie)).response.status,400);assert.equal(objects.size,1);
+  sqlite.close();
+});
+test('music saves real bytes using a freshly resolved server URL, deduplicates retries and enforces album ownership', async () => {
+  const { env, cookie, albumId, sqlite, objects } = await musicUser();
+  Object.assign(env,{MUSIC_API_URL:'https://music-worker.workers.dev',MUSIC_API_TOKEN:'a-test-secret-at-least-32-characters'});
+  const previous=globalThis.fetch;let audioCalls=0,serviceCalls=0;
+  globalThis.fetch=async(url,options)=>{
+    const u=new URL(url);
+    if(u.hostname==='music-worker.workers.dev') {serviceCalls++;assert.equal(options.headers.Authorization,`Bearer ${env.MUSIC_API_TOKEN}`);assert.equal(options.redirect,'manual');return Response.json(u.pathname==='/search'?{tracks:[{id:'123',source:'netease',title:'Test melody',artist:'Test',album:'Demo'}]}:{track:{id:'123',source:'netease',title:'Test melody',artist:'Test',album:'Demo'},url:'https://m8.music.126.net/real.mp3',sizeBytes:musicMP3.length});}
+    assert.equal(u.href,'https://m8.music.126.net/real.mp3');audioCalls++;return new Response(musicMP3,{headers:{'Content-Type':'audio/mpeg'}});
+  };
+  try {
+    assert.equal((await call(env,'music/search','POST',{q:'melody'},cookie)).data.tracks.length,1);
+    const missing=await call(env,'music/save','POST',{id:'123',albumId:'someone-elses-album'},cookie);assert.equal(missing.response.status,404);assert.equal(audioCalls,0);
+    const result=await call(env,'music/save','POST',{id:'123',albumId,url:'https://evil.test/ignored'},cookie);assert.equal(result.response.status,200);assert.equal(audioCalls,1);assert.deepEqual(Buffer.from(objects.get(result.data.id)),musicMP3);
+    assert.equal(sqlite.prepare('SELECT source_url FROM studio_files').get().source_url,'https://music.163.com/song?id=123');
+    assert.equal((await call(env,'music/save','POST',{id:'123',albumId},cookie)).data.alreadySaved,true);assert.equal(audioCalls,1);assert.equal(objects.size,1);assert.equal(serviceCalls,2);
+  } finally {globalThis.fetch=previous;sqlite.close();}
+});
+test('music rejects hostile redirect targets, oversized streams, fake audio and service failures without storing files', async () => {
+  const { env, cookie, albumId, sqlite, objects }=await musicUser();
+  Object.assign(env,{MUSIC_API_URL:'https://music-worker.workers.dev',MUSIC_API_TOKEN:'a-test-secret-at-least-32-characters'});
+  const previous=globalThis.fetch;let mode='redirect',calls=0;
+  globalThis.fetch=async(url)=>{
+    calls++;
+    if(String(url).includes('music-worker.workers.dev')) {
+      if(mode==='service')return Response.json({error:'平台故障'},{status:502});
+      return Response.json({track:{id:'123',source:'netease',title:'t'},url:'https://m8.music.126.net/a.mp3'});
+    }
+    assert.equal(new URL(url).hostname,'m8.music.126.net');
+    if(mode==='redirect')return new Response(null,{status:302,headers:{Location:'https://127.0.0.1/private'}});
+    if(mode==='size')return new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array(25*1048576+1));c.close();}}));
+    return new Response('ID3<html>fake</html>');
+  };
+  try {
+    for(const [value,status] of [['redirect',503],['size',413],['fake',422],['service',502]]) {mode=value;const r=await call(env,'music/save','POST',{id:'123',albumId},cookie);assert.equal(r.response.status,status,r.data.error);assert.equal(objects.size,0);}
+    assert.equal(sqlite.prepare('SELECT count(*) n FROM studio_files').get().n,0);
+    assert.ok(calls>=7);
+  } finally {globalThis.fetch=previous;sqlite.close();}
+});
+test('music MP3 uploads obey the existing member quota and rollback storage errors', async () => {
+  const { env,cookie,albumId,sqlite,objects }=await musicUser();
+  const form=()=>{const f=new FormData();f.set('albumId',albumId);f.set('file',new Blob([musicMP3]),'test.mp3');return f;};
+  sqlite.prepare('UPDATE studio_users SET stored_bytes=? WHERE username=?').run(200*1048576,'music_user');
+  assert.equal((await call(env,'music/upload','POST',form(),cookie)).response.status,403);assert.equal(objects.size,0);
+  sqlite.prepare('UPDATE studio_users SET stored_bytes=0 WHERE username=?').run('music_user');
+  env.img_r2.put=async()=>{throw new Error('test storage failure');};
+  assert.equal((await call(env,'music/upload','POST',form(),cookie)).response.status,500);
+  assert.equal((await call(env,'me','GET',null,cookie)).data.user.storedBytes,0);assert.equal(objects.size,0);
+  sqlite.close();
+});
+
 function environment() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec(readFileSync(new URL('../database/migrations/studio.sql', import.meta.url), 'utf8'));
