@@ -65,3 +65,4 @@ window.createWorkshopInspector = function(tell) {
     refresh(){if(selected&&!selected.isConnected){try{selected=document.querySelector(selectedExact)}catch{selected=null}if(selected)listFor(selected);}if(selected)details();},
   };
 };
+

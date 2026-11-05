@@ -1,6 +1,6 @@
 import { colorRgb, exportTheme, inspectTheme, mapColor, familyMatches, mapFamilyColor, isNeutralColor, migrateColorChanges } from './candy-utils.js?v=20261015a';
 import { initProtectionEditor } from './candy-protection.js?v=20261014b';
-import { initCandyThemePreview } from './candy-theme-preview.js?v=20261014c';
+import { initCandyThemePreview } from './candy-theme-preview.js?v=20261105a';
 import { DEFAULT_RECOLOR, recolorCanvas, sampleColor } from './candy-recolor.js?v=20261014b';
 
 const $ = id => document.getElementById(id);

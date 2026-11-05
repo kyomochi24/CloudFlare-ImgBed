@@ -16,3 +16,4 @@ export function initInspectorUI({$,send,search,switchView,insertCss,toast,choose
   $('catalog-search').oninput=catalog;$('catalog-panel').addEventListener('toggle',()=>{if($('catalog-panel').open)requestStatus()});catalog();
   return {selected,missing,status,requestStatus};
 }
+

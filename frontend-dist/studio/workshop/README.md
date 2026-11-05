@@ -49,3 +49,23 @@ This package does not deploy or push changes to the original repository.
 - Cache version 20261005a is applied to editor/frame scripts, styles and module imports.
 
 Validation: 11 unit tests plus Chromium desktop/mobile checks, including 140-line search navigation, literal replacement and undo, ancestor switching, pseudo content, all-message scope, loaders, missing-node catalog handling, arbitrary input inspection and mobile horizontal-overflow checks. Existing v1 draft, export, viewport, isolation and mocked album tests also pass. Production account APIs and Safari/Tauri are still untested locally.
+
+## 2026-11-05 · Interactive preview and TauriTavern
+
+- Added `frame-ui.js`: nine distinct preview drawers, synchronized open/closed icons and ARIA state, keyboard support, outside-click/Escape dismissal, 13 chat-menu items, extension menu, local appearance dialogs, quick replies and composer/script states. No chat operations or extension execution are performed.
+- The trusted editor and Candy whole-theme preview expose a menu selector outside the imported theme. This can open drawers even if custom CSS decorations intercept the toolbar. Frame root height is explicit so bottom-anchored menus remain in the viewport.
+- Environment selection switches between retained SillyTavern styles and TauriTavern base/mobile styles at commit `fff9af0333be97697be2313981699ab0ce35c236`. Imported styles, fonts and referenced SVGs are included locally. Tauri OLED mode uses upstream CSS and its real `tt-oled-background` root class. Tauri settings content is an appearance sample.
+- Runtime, OLED, quick replies and composer state are preview-only sample fields, saved in existing v1 workshop drafts/projects. Old drafts receive defaults. Theme JSON exports keep unknown fields and do not gain preview settings. No database migration or backend change is required.
+- Candy continues to rebuild image snapshots only on its preview/refresh buttons. Changing preview environment or opening a menu reuses the existing sandbox and assets without uploads or image reprocessing.
+- Production Discord membership/quota copy (including dondon) is retained in the Studio integration files.
+
+Validation: 28 Node tests; Chromium browser checks in desktop and mobile editor layouts, including all nine drawers, bottom menus, dialogs, blocked-decoration fallback, CSS preservation across runtime changes, 1280px/390px viewports, Tauri/OLED, generating/script states, quick replies, draft recovery, zero mutation requests and opaque-parent isolation. Standalone previews and Candy integration are checked separately during delivery.
+
+The preview uses this browser's rendering engine. Native Android/iOS WebView differences, OS keyboard/insets, platform fonts, full Tauri host APIs and third-party plugin runtimes are not emulated. Confirm final artwork on the target app when those differences matter.
+
+Tests:
+
+    node --test tests/workshop-preview.test.mjs
+    node tests/workshop-preview-browser.mjs
+
+Browser tests require Playwright and Chromium. Set PLAYWRIGHT_MODULE to an installed module URL and CHROME_PATH to an existing Chrome executable if needed. SCREENSHOT_DIR optionally saves screenshots. To serve locally: node tests/workshop-preview-server.mjs, then open its printed URL.

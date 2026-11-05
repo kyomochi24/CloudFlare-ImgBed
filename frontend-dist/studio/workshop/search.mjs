@@ -30,3 +30,4 @@ export function initCodeSearch({editor,$,setCss,switchView,toast}){
   document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='f'){e.preventDefault();const selected=editor.value.slice(editor.selectionStart,editor.selectionEnd);open(selected&&!selected.includes('\n')?selected:undefined);}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='g'){e.preventDefault();$('search-panel').hidden=false;switchView('code');$('goto-line').focus();$('goto-line').select();}if(e.key==='Escape'&&!$('search-panel').hidden){$('search-panel').hidden=true;editor.focus();}});
   return {refresh,open};
 }
+

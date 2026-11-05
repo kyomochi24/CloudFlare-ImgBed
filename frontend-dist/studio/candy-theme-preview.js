@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import {DEFAULT_THEME, DEFAULT_SAMPLE} from './workshop/core.mjs?v=20261014c';
+import {DEFAULT_THEME, DEFAULT_SAMPLE} from './workshop/core.mjs?v=20261105a';
 
 export function initCandyThemePreview({buildSnapshot, notice}) {
   const find = id => document.getElementById('candy-theme-preview-' + id);
@@ -29,12 +29,12 @@ export function initCandyThemePreview({buildSnapshot, notice}) {
     if (!ready || !payload || !dialog.open) return;
     const data = payload; payload = null;
     expectReply();
-    frame.contentWindow.postMessage({channel,type:'render',theme:{...DEFAULT_THEME,...data.theme},sample:{...DEFAULT_SAMPLE},assets:data.assets},'*');
+    frame.contentWindow.postMessage({channel,type:'render',theme:{...DEFAULT_THEME,...data.theme},sample:{...DEFAULT_SAMPLE,runtime:find('runtime').value},assets:data.assets},'*');
   }
   async function boot(version) {
     if (channel) return;
     if (!template) {
-      const response = await fetch(new URL('frame.html?v=20261014c',base));
+      const response = await fetch(new URL('frame.html?v=20261105a',base));
       if (!response.ok) throw new Error('工坊预览资源读取失败，请确认 workshop 文件夹已上传');
       template = await response.text();
     }
@@ -71,11 +71,14 @@ export function initCandyThemePreview({buildSnapshot, notice}) {
   find('close').addEventListener('click',close);
   dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
   find('device').addEventListener('change',resize);
+  find('runtime').addEventListener('change',()=>{if(ready)frame.contentWindow.postMessage({channel,type:'ui',action:'runtime',runtime:find('runtime').value},'*');});
+  find('menu').addEventListener('change',()=>{if(ready)frame.contentWindow.postMessage({channel,type:'ui',action:'open',target:find('menu').value},'*');});
   new ResizeObserver(()=>{if(dialog.open)resize();}).observe(find('stage'));
   window.addEventListener('message',event=>{
     const data=event.data;
     if(event.source!==frame.contentWindow || !channel || data?.channel!==channel || data.source!=='qiuqiu-preview')return;
     if(data.type==='ready'){ready=true;send();}
+    if(data.type==='ui-state')find('menu').value=data.target||'';
     if(data.type==='rendered'){clearTimeout(replyTimer);applying=false;refresh.disabled=false;dirtyText();}
     if(data.type==='error'){clearTimeout(replyTimer);applying=false;refresh.disabled=false;state.textContent='预览未更新：'+data.message;}
   });
