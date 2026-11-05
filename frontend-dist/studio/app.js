@@ -1,3 +1,4 @@
+import { initMusic } from './music.js?v=20261105music1';
 import { imageLinks, replaceLinks, renameTheme } from './theme-utils.js?v=20261015a';
 import { initStudioTools } from './tools.js?v=20260922j';
 import { initCandy } from './candy.js?v=20261105a';
@@ -7,6 +8,7 @@ import { initFontTool } from './font-tool.js?v=20260928-font3';
   'use strict';
   const $ = id => document.getElementById(id);
   const state = { user: null, albums: [], albumId: '', selectedAlbums: new Set(), deletingAlbums: false, files: [], hasMore: false, selectedFiles: new Set(), uploading: false, importing: false, rawJson: '', jsonName: '', themeTitle: '', importAlbumId: '', links: [], replacements: new Map(), application: null };
+  let fileRequest = 0;
   const fmt = n => n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1024).toFixed(1)} KB`;
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
   const progress = document.createElement('div');
@@ -78,6 +80,7 @@ import { initFontTool } from './font-tool.js?v=20260928-font3';
     $('clear-selected-albums').disabled = state.deletingAlbums || !state.selectedAlbums.size;
     $('delete-selected-albums').disabled = state.deletingAlbums || !state.selectedAlbums.size;
     $('current-album-name').textContent = state.albums.find(a => a.id === state.albumId)?.name || '我的相册';
+    music.updateAlbum();
     $('font-album').textContent = state.albums.find(a => a.id === state.albumId)?.name || '当前相册';
     const target = $('move-target');
     const previous = target.value;
@@ -89,13 +92,14 @@ import { initFontTool } from './font-tool.js?v=20260928-font3';
   }
   function renderFiles() {
     const previewTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
-    $('file-grid').innerHTML = state.files.length ? state.files.map(f => `<div class="file-card"><button class="file-image-select ${f.mime_type === 'image/png' ? 'checker' : ''}" type="button" data-select="${escapeHtml(f.id)}" aria-label="选择文件：${escapeHtml(f.file_name)}">${previewTypes.has(f.mime_type) ? `<img loading="lazy" src="${escapeHtml(f.url)}" alt="">` : '<span class="file-placeholder" aria-hidden="true">✦<small>文件</small></span>'}${f.file_name.endsWith('-抠图.png') ? '<span class="cutout-card-badge" aria-hidden="true">透明 PNG</span>' : ''}<span class="selection-badge" aria-hidden="true"></span></button><strong title="${escapeHtml(f.file_name)}">${escapeHtml(f.file_name)}</strong><div class="file-actions"><button type="button" data-copy="${escapeHtml(f.url)}">复制图链</button><button type="button" data-rename="${escapeHtml(f.id)}">重命名</button><button type="button" data-delete="${escapeHtml(f.id)}">删除</button></div></div>`).join('') : '<div class="empty">相册里还空空的。上传第一张图片吧 ♡</div>';
+    $('file-grid').innerHTML = state.files.length ? state.files.map(f => `<div class="file-card"><button class="file-image-select ${f.mime_type === 'image/png' ? 'checker' : ''}" type="button" data-select="${escapeHtml(f.id)}" aria-label="选择文件：${escapeHtml(f.file_name)}">${previewTypes.has(f.mime_type) ? `<img loading="lazy" src="${escapeHtml(f.url)}" alt="">` : (f.mime_type === 'audio/mpeg' ? '<span class="file-placeholder" aria-hidden="true">♫<small>MP3 音频</small></span>' : '<span class="file-placeholder" aria-hidden="true">✦<small>文件</small></span>')}${f.file_name.endsWith('-抠图.png') ? '<span class="cutout-card-badge" aria-hidden="true">透明 PNG</span>' : ''}<span class="selection-badge" aria-hidden="true"></span></button><strong title="${escapeHtml(f.file_name)}">${escapeHtml(f.file_name)}</strong><div class="file-actions"><button type="button" data-copy="${escapeHtml(f.url)}">${f.mime_type === 'audio/mpeg' ? '复制 BGM' : '复制图链'}</button><button type="button" data-rename="${escapeHtml(f.id)}">重命名</button><button type="button" data-delete="${escapeHtml(f.id)}">删除</button></div></div>`).join('') : '<div class="empty">相册里还空空的。上传第一张图片吧 ♡</div>';
     $('more-files').classList.toggle('hidden', !state.hasMore);
     renderSelection();
   }
   async function refreshProfile() { const data = await api('me'); state.user = data.user; state.application = data.application; renderProfile(); showMember(); }
   const studioTools = initStudioTools({ api, state, refreshProfile, refreshAlbums, notice });
   initFontTool({ api, state, refreshProfile, refreshAlbums, refreshFiles, notice });
+  const music = initMusic({ api, state, refreshProfile, refreshAlbums, notice });
   const candy = initCandy({ api, state, refreshProfile, refreshAlbums, notice });
   async function refreshAlbums() {
     const data = await api('albums'); state.albums = data.albums;
@@ -103,7 +107,7 @@ import { initFontTool } from './font-tool.js?v=20260928-font3';
     if (!state.albums.some(a => a.id === state.albumId)) state.albumId = state.albums[0]?.id || '';
     renderAlbums(); await refreshFiles();
   }
-  async function refreshFiles(more = false) { if (!more) state.selectedFiles.clear(); if (!state.albumId) { state.files = []; state.hasMore = false; renderFiles(); return; } const offset = more ? state.files.length : 0; const data = await api(`files?album=${encodeURIComponent(state.albumId)}&offset=${offset}`); state.files = more ? [...state.files, ...data.files] : data.files; state.hasMore = data.hasMore; renderFiles(); }
+  async function refreshFiles(more = false) { const requestId = ++fileRequest, albumId = state.albumId; if (!more) state.selectedFiles.clear(); if (!albumId) { state.files = []; state.hasMore = false; renderFiles(); return; } const offset = more ? state.files.length : 0; const data = await api(`files?album=${encodeURIComponent(albumId)}&offset=${offset}`); if (requestId !== fileRequest || albumId !== state.albumId || !state.user) return; state.files = more ? [...state.files, ...data.files] : data.files; state.hasMore = data.hasMore; renderFiles(); }
   async function loadAnnouncement() {
     const { announcement } = await api('announcement');
     const news = announcement || {};
@@ -144,11 +148,12 @@ import { initFontTool } from './font-tool.js?v=20260928-font3';
     try { const c = await api('config'); $('discord-login').classList.toggle('disabled', !c.discordEnabled); $('discord-login').href = c.discordEnabled ? '/api/studio/oauth/start' : '#'; $('discord-hint').textContent = c.discordEnabled ? '请先加入管理员指定的 Discord 社区。' : '站长尚未填写 Discord 应用和社区 ID；可使用管理员发放的账号。'; } catch (e) { $('discord-hint').textContent = e.message; }
     const error = new URLSearchParams(location.search).get('error'); if (error === 'not_member') { notice('这个 Discord 账号尚未加入指定社区，暂时不能登录。', true); history.replaceState(null, '', '/studio/'); }
     try { await refreshProfile(); await refreshAlbums(); } catch { state.user = null; showMember(); }
+    if (state.user) await music.refresh();
     if (state.user) try { await studioTools.refreshQuota(); } catch (error) { $('cutout-quota').textContent = error.message; }
     if (state.user) { try { await candy.refreshQuota(); } catch (error) { $('candy-quota').textContent = `改色功能尚未就绪：${error.message}，请先执行 D1 迁移`; } await candy.refreshDrafts(); }
   }
-  $('local-login').addEventListener('submit', async event => { event.preventDefault(); const formElement = event.currentTarget; const b = formElement.querySelector('button'); b.disabled = true; try { const form = new FormData(formElement); const data = await api('login', jsonOptions({ username: form.get('username'), password: form.get('password') })); state.user = data.user; await refreshProfile(); await refreshAlbums(); await studioTools.refreshQuota(); await candy.refreshQuota(); await candy.refreshDrafts(); formElement.reset(); notice('欢迎回家 ♡'); } catch (e) { notice(e.message, true); } finally { b.disabled = false; } });
-  $('logout').addEventListener('click', async () => { try { await api('logout', { method: 'POST' }); state.user = null; showMember(); notice('下次再来玩呀 ♡'); } catch (e) { notice(e.message, true); } });
+  $('local-login').addEventListener('submit', async event => { event.preventDefault(); const formElement = event.currentTarget; const b = formElement.querySelector('button'); b.disabled = true; try { const form = new FormData(formElement); const data = await api('login', jsonOptions({ username: form.get('username'), password: form.get('password') })); state.user = data.user; await refreshProfile(); await refreshAlbums(); await music.refresh(); await studioTools.refreshQuota(); await candy.refreshQuota(); await candy.refreshDrafts(); formElement.reset(); notice('欢迎回家 ♡'); } catch (e) { notice(e.message, true); } finally { b.disabled = false; } });
+  $('logout').addEventListener('click', async () => { try { await api('logout', { method: 'POST' }); state.user = null; music.reset(); showMember(); notice('下次再来玩呀 ♡'); } catch (e) { notice(e.message, true); } });
   $('new-album').addEventListener('click', () => $('album-dialog').showModal());
   $('announcement-open').addEventListener('click', () => $('announcement-dialog').showModal());
   $('announcement-close').addEventListener('click', () => $('announcement-dialog').close());

@@ -117,3 +117,4 @@ export function initFontTool({ api, state, refreshProfile, refreshAlbums, refres
     finally { selected.busy = false; run.disabled = false; clear.disabled = false; }
   });
 }
+
