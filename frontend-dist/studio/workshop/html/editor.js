@@ -8,7 +8,7 @@ import {
   replaceAssetUrl,
   safeResourceUrl,
   scanAssets
-} from './core.mjs?v=20261113a';
+} from './core.mjs?v=20261113b';
 
 const $ = id => document.getElementById(id);
 const editor = $('html-editor');
@@ -18,6 +18,7 @@ let project = freshProject();
 let channel = '';
 let previewReady = false;
 let renderTimer;
+let previewSource;
 let saveTimer;
 let historyTimer;
 let toastTimer;
@@ -32,6 +33,8 @@ let editMode = false;
 let albumOffset = 0;
 let albumRequest = 0;
 let albumsLoaded = false;
+const fontPreviews = new Map();
+const compactLayout = matchMedia('(max-width: 980px)');
 
 function toast(message) {
   $('toast').textContent = message;
@@ -101,10 +104,11 @@ function updateHistoryButtons() {
 }
 
 function setCode(html, options = {}) {
+  if (!options.keepSelection) clearSelection();
   if (options.record !== false) recordHistory();
   editor.value = String(html);
   if (options.record !== false) recordHistory();
-  changed({immediate: options.immediate});
+  changed(options);
 }
 
 function moveHistory(delta) {
@@ -112,12 +116,13 @@ function moveHistory(delta) {
   const next = historyIndex + delta;
   if (next < 0 || next >= history.length) return;
   historyIndex = next;
+  clearSelection();
   editor.value = history[next];
   updateHistoryButtons();
   changed({immediate: true});
 }
 
-function changed({immediate = false} = {}) {
+function changed({immediate = false, skipPreview = false} = {}) {
   project.html = editor.value;
   project.name = $('project-name').value.trim() || '我的开场白';
   $('save-state').textContent = '有更改 · 即将保存';
@@ -126,7 +131,8 @@ function changed({immediate = false} = {}) {
   updateLines();
   renderAssetList();
   clearTimeout(renderTimer);
-  renderTimer = setTimeout(renderPreview, immediate ? 0 : 260);
+  if (skipPreview) previewSource = editor.value;
+  else renderTimer = setTimeout(renderPreview, immediate ? 0 : 260);
 }
 
 function updateLines() {
@@ -169,10 +175,66 @@ function describe(element){const style=getComputedStyle(element),rect=element.ge
 function ensureOverlay(){if(overlay)return overlay;overlay=document.createElement('div');overlay.id='qiuqiu-workbench-overlay';overlay.innerHTML='<button type="button" data-handle="move" aria-label="拖动元素">✥</button><button type="button" data-handle="resize" aria-label="缩放元素">↘</button>';document.body.append(overlay);overlay.querySelectorAll('button').forEach(button=>button.addEventListener('pointerdown',startDrag));return overlay}
 function placeOverlay(){if(!selected)return;const rect=selected.getBoundingClientRect(),box=ensureOverlay();box.style.left=rect.left+'px';box.style.top=rect.top+'px';box.style.width=rect.width+'px';box.style.height=rect.height+'px';box.hidden=false;box.classList.toggle('editing',editMode)}
 function select(element,notify=true){if(selected)selected.removeAttribute('data-qiuqiu-selected');selected=element;if(!selected){if(overlay)overlay.hidden=true;return}selected.setAttribute('data-qiuqiu-selected','');placeOverlay();if(notify)tell('selected',describe(selected))}
-function startDrag(event){if(!editMode||!selected)return;event.preventDefault();event.stopPropagation();const handle=event.currentTarget.dataset.handle,startX=event.clientX,startY=event.clientY,startRect=selected.getBoundingClientRect(),raw=selected.style.translate.trim().split(/\s+/),baseX=parseFloat(raw[0])||0,baseY=parseFloat(raw[1])||0;event.currentTarget.setPointerCapture(event.pointerId);const move=moveEvent=>{const dx=moveEvent.clientX-startX,dy=moveEvent.clientY-startY;if(handle==='move')selected.style.translate=(baseX+dx)+'px '+(baseY+dy)+'px';else{selected.style.width=Math.max(12,startRect.width+dx)+'px';if(selected.matches('img,video,svg,canvas'))selected.style.height='auto';else selected.style.height=Math.max(12,startRect.height+dy)+'px'}placeOverlay()};const end=()=>{event.currentTarget.removeEventListener('pointermove',move);event.currentTarget.removeEventListener('pointerup',end);tell('style-change',{id:selected.dataset.qiuqiuNode,style:selected.getAttribute('style')||''});tell('selected',describe(selected))};event.currentTarget.addEventListener('pointermove',move);event.currentTarget.addEventListener('pointerup',end)}
-document.addEventListener('click',event=>{if(event.target.closest('#qiuqiu-workbench-overlay'))return;const target=event.target.closest('[data-qiuqiu-node]');if(!target)return;event.preventDefault();event.stopPropagation();select(target)},true);
+function startDrag(event) {
+  if (!editMode || !selected || !event.isPrimary || event.button !== 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const element = selected;
+  const button = event.currentTarget;
+  const pointerId = event.pointerId;
+  const original = element.getAttribute('style');
+  const style = getComputedStyle(element);
+  const [x = '0px', y = '0px', z] = (style.translate === 'none' ? '' : style.translate).match(/calc\\([^)]*\\)|[^\\s]+/g) || [];
+  const {width, height} = element.getBoundingClientRect();
+  const ratio = width / Math.max(height, 1);
+  const baseWidth = parseFloat(style.width) || width;
+  const baseHeight = parseFloat(style.height) || height;
+  const moving = button.dataset.handle === 'move';
+  let changed = false;
+  button.setPointerCapture(pointerId);
+
+  function move(next) {
+    if (next.pointerId !== pointerId) return;
+    const dx = Math.round(next.clientX - event.clientX);
+    const dy = Math.round(next.clientY - event.clientY);
+    if (!changed && Math.hypot(dx, dy) < 2) return;
+    changed = true;
+    if (moving) {
+      element.style.translate = 'calc(' + x + ' + ' + dx + 'px) calc(' + y + ' + ' + dy + 'px)' + (z ? ' ' + z : '');
+    } else {
+      if (style.display === 'inline') element.style.display = 'inline-block';
+      const keepRatio = element.matches('img,video,svg,canvas');
+      const delta = keepRatio && Math.abs(dy * ratio) > Math.abs(dx) ? dy * ratio : dx;
+      const newWidth = Math.max(12, Math.round(baseWidth + delta));
+      element.style.width = newWidth + 'px';
+      element.style.height = Math.max(12, Math.round(keepRatio ? baseHeight * newWidth / Math.max(1, baseWidth) : baseHeight + dy)) + 'px';
+    }
+    placeOverlay();
+  }
+
+  function end(next) {
+    if (next.pointerId !== pointerId) return;
+    button.removeEventListener('pointermove', move);
+    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) button.removeEventListener(type, end);
+    if (!changed) return;
+    if (next.type !== 'pointerup') {
+      if (original === null) element.removeAttribute('style');
+      else element.setAttribute('style', original);
+      placeOverlay();
+      return;
+    }
+    if (selected === element) {
+      const properties = moving ? ['translate'] : ['display', 'width', 'height'];
+      const updates = Object.fromEntries(properties.filter(property => element.style.getPropertyValue(property)).map(property => [property, element.style.getPropertyValue(property)]));
+      tell('style-change', {id: element.dataset.qiuqiuNode, updates, selection: describe(element)});
+    }
+  }
+  button.addEventListener('pointermove', move);
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) button.addEventListener(type, end);
+}
+document.addEventListener('click',event=>{if(!event.target.closest||event.target.closest('#qiuqiu-workbench-overlay'))return;const target=event.target.closest('[data-qiuqiu-node]');if(!target)return;event.preventDefault();event.stopPropagation();select(target)},true);
 addEventListener('scroll',placeOverlay,true);addEventListener('resize',placeOverlay);
-addEventListener('message',event=>{const data=event.data;if(data?.channel!==channel)return;if(data.type==='edit-mode'){editMode=!!data.enabled;placeOverlay()}if(data.type==='select'){const target=document.querySelector('[data-qiuqiu-node="'+CSS.escape(String(data.id))+'"]');select(target,false)}if(data.type==='select-asset'){let target=null;for(const element of document.querySelectorAll('[data-qiuqiu-node]')){if([element.getAttribute('src'),element.getAttribute('poster')].includes(data.url)||getComputedStyle(element).backgroundImage.includes(data.url)){target=element;break}}if(target){select(target);target.scrollIntoView({block:'center',inline:'center'})}}if(data.type==='clear')select(null,false)});
+addEventListener('message',event=>{const data=event.data;if(event.source!==parent||data?.channel!==channel)return;if(data.type==='edit-mode'){editMode=!!data.enabled;placeOverlay()}if(data.type==='select'){const target=document.querySelector('[data-qiuqiu-node="'+CSS.escape(String(data.id))+'"]');select(target,false)}if(data.type==='select-asset'){let target=null;for(const element of document.querySelectorAll('[data-qiuqiu-node]')){if([element.getAttribute('src'),element.getAttribute('poster')].includes(data.url)||getComputedStyle(element).backgroundImage.includes(data.url)){target=element;break}}if(target){select(target);target.scrollIntoView({block:'center',inline:'center'})}}if(data.type==='clear')select(null,false)});
 tell('ready',{width:innerWidth,height:innerHeight});
 })()</script>`;
 }
@@ -185,13 +247,15 @@ function buildPreviewDocument() {
   csp.content = `default-src 'none'; script-src 'nonce-${nonce}'; style-src https: http: data: blob: 'unsafe-inline'; img-src https: http: data: blob:; media-src https: http: data: blob:; font-src https: http: data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'`;
   documentNode.head.prepend(csp);
   const helper = documentNode.createElement('style');
-  helper.textContent = `html,body{min-height:100%;margin:0}*,*::before,*::after{box-sizing:border-box}[data-qiuqiu-selected]{outline:2px solid #e25f93!important;outline-offset:2px}#qiuqiu-workbench-overlay{position:fixed;z-index:2147483647;border:1px dashed #e25f93;pointer-events:none}#qiuqiu-workbench-overlay button{display:none;position:absolute;width:28px;height:28px;padding:0;border:2px solid white;border-radius:50%;background:#a94f76;color:#fff;box-shadow:0 3px 10px #4f304866;pointer-events:auto;touch-action:none;font:16px/1 system-ui;place-items:center}#qiuqiu-workbench-overlay.editing button{display:grid}#qiuqiu-workbench-overlay [data-handle=move]{left:-15px;top:-15px;cursor:move}#qiuqiu-workbench-overlay [data-handle=resize]{right:-15px;bottom:-15px;cursor:nwse-resize}`;
+  helper.textContent = `html,body{min-height:100%;margin:0}*,*::before,*::after{box-sizing:border-box}[data-qiuqiu-selected]{outline:2px solid #e25f93!important;outline-offset:2px}#qiuqiu-workbench-overlay{position:fixed;z-index:2147483647;border:1px dashed #e25f93;pointer-events:none}#qiuqiu-workbench-overlay button{display:none;position:absolute;width:28px;height:28px;padding:0;border:2px solid white;border-radius:50%;background:#a94f76;color:#fff;box-shadow:0 3px 10px #4f304866;pointer-events:auto;touch-action:none;font:16px/1 system-ui;place-items:center}#qiuqiu-workbench-overlay.editing button{display:grid}#qiuqiu-workbench-overlay [data-handle=move]{left:-15px;top:-15px;cursor:move}#qiuqiu-workbench-overlay [data-handle=resize]{right:-15px;bottom:-15px;cursor:nwse-resize}@media(pointer:coarse){#qiuqiu-workbench-overlay button{width:44px;height:44px;font-size:22px}#qiuqiu-workbench-overlay [data-handle=move]{left:-22px;top:-22px}#qiuqiu-workbench-overlay [data-handle=resize]{right:-22px;bottom:-22px}}`;
+  helper.textContent += '@media(pointer:coarse){#qiuqiu-workbench-overlay [data-handle=move]{left:0;top:0}#qiuqiu-workbench-overlay [data-handle=resize]{right:0;bottom:0}}';
   documentNode.head.append(helper);
   documentNode.body.insertAdjacentHTML('beforeend', previewBridge(nonce));
   return '<!doctype html>\n' + documentNode.documentElement.outerHTML;
 }
 
 function renderPreview() {
+  previewSource = editor.value;
   previewReady = false;
   channel = crypto.randomUUID();
   $('render-state').textContent = '正在更新预览…';
@@ -216,8 +280,16 @@ window.addEventListener('message', event => {
     sendPreview('edit-mode', {enabled: editMode});
     if (selectedNode) sendPreview('select', {id: selectedNode.id});
   }
+  if (previewSource !== editor.value) return;
   if (data.type === 'selected') selectNode(data);
-  if (data.type === 'style-change') replaceNodeStyle(data.id, data.style);
+  if (data.type === 'style-change' && data.id === selectedNode?.id) {
+    mutateNode(data.id, node => {
+      for (const property of ['translate', 'display', 'width', 'height']) {
+        if (typeof data.updates?.[property] === 'string') node.style.setProperty(property, data.updates[property]);
+      }
+    }, {skipPreview: true});
+    selectNode(data.selection);
+  }
 });
 
 function parseSource() {
@@ -232,19 +304,12 @@ function serializeSource(documentNode) {
   return [headContent, bodyContent].filter(Boolean).join('\n\n');
 }
 
-function mutateNode(id, mutator) {
+function mutateNode(id, mutator, {skipPreview = false} = {}) {
   const documentNode = parseSource();
   const node = editableNodes(documentNode)[Number(id)];
   if (!node) return toast('代码已经变化，请重新点选元素');
   mutator(node);
-  setCode(serializeSource(documentNode), {immediate: true});
-}
-
-function replaceNodeStyle(id, styleText) {
-  mutateNode(id, node => {
-    if (styleText) node.setAttribute('style', styleText);
-    else node.removeAttribute('style');
-  });
+  setCode(serializeSource(documentNode), {immediate: true, keepSelection: true, skipPreview});
 }
 
 function selectNode(data) {
@@ -252,6 +317,8 @@ function selectNode(data) {
   $('element-panel').hidden = false;
   $('element-label').textContent = `<${data.tag}> ${data.label || ''}`;
   $('selected-element').textContent = `已选中 <${data.tag}> ${data.label || ''}`;
+  $('show-element').disabled = false;
+  $('clear-selection').disabled = false;
   $('element-width').value = data.width || '';
   $('element-height').value = data.height || '';
   $('element-radius').value = data.radius || 0;
@@ -283,16 +350,15 @@ for (const [id, property] of [['element-width', 'width'], ['element-height', 'he
   });
 }
 $('element-fit').addEventListener('change', () => styleSelected({'object-fit': $('element-fit').value}));
-for (const id of ['object-position-x', 'object-position-y']) $(id).addEventListener('input', () => {
-  updateObjectPositionLabel();
-  clearTimeout(renderTimer);
-  renderTimer = setTimeout(() => styleSelected({'object-position': $('object-position-value').value}), 140);
-});
+for (const id of ['object-position-x', 'object-position-y']) {
+  $(id).addEventListener('input', updateObjectPositionLabel);
+  $(id).addEventListener('change', () => styleSelected({'object-position': $('object-position-value').value}));
+}
 document.querySelectorAll('[data-align]').forEach(button => button.addEventListener('click', () => {
   const align = button.dataset.align;
   styleSelected({display: 'block', 'margin-left': align === 'left' ? '0' : 'auto', 'margin-right': align === 'right' ? '0' : 'auto'});
 }));
-$('reset-element').addEventListener('click', () => styleSelected({width: '', height: '', 'border-radius': '', 'object-fit': '', 'object-position': '', translate: '', 'margin-left': '', 'margin-right': ''}));
+$('reset-element').addEventListener('click', () => styleSelected({width: '', height: '', display: '', 'border-radius': '', 'object-fit': '', 'object-position': '', translate: '', 'margin-left': '', 'margin-right': ''}));
 
 function typeForFilter(asset) {
   return asset.type === 'video' ? 'music' : asset.type;
@@ -307,6 +373,11 @@ function renderAssetList() {
   for (const type of ['image', 'font', 'music']) $(`count-${type}`).textContent = counts[type] || 0;
   const visible = assets.filter(asset => assetFilter === 'all' || typeForFilter(asset) === assetFilter);
   $('asset-list').replaceChildren();
+  if (selectedAssetUrl && !assets.some(asset => asset.url === selectedAssetUrl)) {
+    selectedAssetUrl = '';
+    ++albumRequest;
+    $('asset-replace-panel').hidden = true;
+  }
   if (!visible.length) {
     const empty = document.createElement('p');
     empty.className = 'empty';
@@ -315,10 +386,6 @@ function renderAssetList() {
     return;
   }
   visible.forEach((asset, index) => $('asset-list').append(createAssetCard(asset, index)));
-  if (selectedAssetUrl && !assets.some(asset => asset.url === selectedAssetUrl)) {
-    selectedAssetUrl = '';
-    $('asset-replace-panel').hidden = true;
-  }
 }
 
 function createThumb(asset, index, compact = false) {
@@ -337,9 +404,15 @@ function createThumb(asset, index, compact = false) {
     thumb.textContent = 'Aa';
     thumb.classList.add('font');
     if ('FontFace' in window) {
-      const family = `qiuqiu-asset-${Date.now()}-${index}`;
-      const face = new FontFace(family, `url(${JSON.stringify(asset.url)})`);
-      face.load().then(font => { document.fonts.add(font); thumb.style.fontFamily = family; }).catch(() => {});
+      if (!fontPreviews.has(asset.url)) {
+        const family = `qiuqiu-asset-${crypto.randomUUID()}`;
+        const face = new FontFace(family, `url(${JSON.stringify(asset.url)})`);
+        fontPreviews.set(asset.url, face.load().then(font => {
+          document.fonts.add(font);
+          return family;
+        }).catch(() => ''));
+      }
+      fontPreviews.get(asset.url).then(family => { if (family) thumb.style.fontFamily = family; });
     }
   } else {
     thumb.textContent = asset.type === 'video' ? '▶' : '♫';
@@ -351,7 +424,6 @@ function createThumb(asset, index, compact = false) {
 function createAssetCard(asset, index) {
   const card = document.createElement('div');
   card.className = 'asset-card' + (asset.url === selectedAssetUrl ? ' selected' : '');
-  card.append(createThumb(asset, index));
   const copy = document.createElement('button');
   copy.className = 'asset-copy';
   copy.type = 'button';
@@ -361,6 +433,13 @@ function createAssetCard(asset, index) {
   const label = {image: '图片', font: '字体', music: '音乐', video: '视频'}[asset.type] || '素材';
   meta.textContent = `${label} · 使用 ${asset.occurrences.length} 处`;
   copy.append(name, meta);
+  const thumbnail = document.createElement('button');
+  thumbnail.type = 'button';
+  thumbnail.className = 'thumb-button';
+  thumbnail.setAttribute('aria-label', '选择 ' + name.textContent);
+  thumbnail.append(createThumb(asset, index));
+  thumbnail.addEventListener('click', () => selectAsset(asset));
+  card.append(thumbnail);
   copy.addEventListener('click', () => selectAsset(asset));
   if (['music', 'video'].includes(asset.type)) copy.addEventListener('dblclick', () => playAsset(asset.url));
   card.append(copy);
@@ -373,7 +452,7 @@ function createAssetCard(asset, index) {
   return card;
 }
 
-function selectAsset(asset) {
+function selectAsset(asset, {reloadAlbum = true} = {}) {
   selectedAssetUrl = asset.url;
   $('asset-replace-panel').hidden = false;
   $('selected-asset-name').textContent = displayAssetName(asset.url);
@@ -386,26 +465,43 @@ function selectAsset(asset) {
   if (asset.occurrences.length > 1) $('replace-scope').append(new Option(`替换全部 ${asset.occurrences.length} 处`, 'all'));
   renderAssetList();
   sendPreview('select-asset', {url: asset.url});
-  if (albumsLoaded && $('album-list').value) loadAlbumAssets(false);
+  if (reloadAlbum && albumsLoaded && $('album-list').value) loadAlbumAssets(false);
 }
 
 function locateAsset(asset = assets.find(item => item.url === selectedAssetUrl)) {
   if (!asset) return;
-  const selectedOccurrence = $('replace-scope').value.match(/^one:(\d+)$/)?.[1];
+  const selectedOccurrence = asset.url === selectedAssetUrl ? $('replace-scope').value.match(/^one:(\d+)$/)?.[1] : 0;
   const occurrence = asset.occurrences[Number(selectedOccurrence) || 0];
+  if (!occurrence) return;
+  switchView('code');
   editor.focus();
   editor.setSelectionRange(occurrence.start, occurrence.end);
   const before = editor.value.slice(0, occurrence.start).split('\n').length - 1;
   editor.scrollTop = Math.max(0, (before - 4) * 19.4);
-  switchView('code');
 }
 
 function playAsset(url) {
-  const audio = $('audio-preview');
-  audio.src = url;
-  audio.hidden = false;
-  audio.play().catch(() => toast('浏览器阻止了自动播放，请点播放器的播放按钮'));
+  closeMedia();
+  const asset = assets.find(item => item.url === url);
+  const media = $(asset?.type === 'video' ? 'video-preview' : 'audio-preview');
+  $('media-preview').hidden = false;
+  media.hidden = false;
+  media.src = url;
+  media.play().catch(error => {
+    if (!media.hidden) toast(error.name === 'NotAllowedError' ? '请点播放器的播放按钮' : '这段媒体暂时无法播放');
+  });
 }
+
+function closeMedia() {
+  for (const id of ['audio-preview', 'video-preview']) {
+    const media = $(id);
+    media.pause();
+    media.removeAttribute('src');
+    media.hidden = true;
+  }
+  $('media-preview').hidden = true;
+}
+$('close-media').addEventListener('click', closeMedia);
 
 document.querySelectorAll('[data-filter]').forEach(button => button.addEventListener('click', () => {
   assetFilter = button.dataset.filter;
@@ -423,6 +519,9 @@ async function api(path) {
 
 $('load-albums').addEventListener('click', async () => {
   $('load-albums').disabled = true;
+  ++albumRequest;
+  $('album-assets').replaceChildren();
+  $('more-assets').hidden = true;
   try {
     const data = await api('albums');
     $('album-list').replaceChildren(new Option('选择相册', ''));
@@ -449,19 +548,19 @@ function fileType(file) {
 function matchesSelectedType(file) {
   const selected = assets.find(asset => asset.url === selectedAssetUrl);
   if (!selected) return false;
-  const expected = typeForFilter(selected);
   const actual = fileType(file);
-  return expected === (actual === 'video' ? 'music' : actual);
+  return selected.type === actual && Boolean(safeResourceUrl(file.url));
 }
 
 async function loadAlbumAssets(more = false) {
   const album = $('album-list').value;
-  if (!album) return;
   const request = ++albumRequest;
   if (!more) {
     albumOffset = 0;
     $('album-assets').replaceChildren();
+    $('more-assets').hidden = true;
   }
+  if (!album) return;
   $('more-assets').disabled = true;
   try {
     const data = await api(`files?album=${encodeURIComponent(album)}&offset=${albumOffset}`);
@@ -470,11 +569,11 @@ async function loadAlbumAssets(more = false) {
     files.filter(matchesSelectedType).forEach((file, index) => $('album-assets').append(createAlbumAsset(file, index)));
     albumOffset += files.length;
     $('more-assets').hidden = !data.hasMore;
-    $('album-status').textContent = $('album-assets').children.length ? '点击一个缩略图，立即替换并更新预览。' : '这个相册里没有与当前素材同类型的文件。';
+    $('album-status').textContent = $('album-assets').children.length ? '点击一个缩略图，立即替换并更新预览。' : data.hasMore ? '这一页没有同类型素材，可继续查看更多。' : '这个相册里没有与当前素材同类型的文件。';
   } catch (error) {
-    $('album-status').textContent = error.message;
+    if (request === albumRequest) $('album-status').textContent = error.message;
   } finally {
-    $('more-assets').disabled = false;
+    if (request === albumRequest) $('more-assets').disabled = false;
   }
 }
 
@@ -503,6 +602,8 @@ function replaceSelectedAsset(newUrl) {
     const updated = replaceAssetUrl(editor.value, selectedAssetUrl, newUrl, {all, occurrence});
     selectedAssetUrl = newUrl;
     setCode(updated, {immediate: true});
+    const replacement = assets.find(asset => asset.url === newUrl);
+    if (replacement) selectAsset(replacement, {reloadAlbum: false});
     toast(all && current.occurrences.length > 1 ? `已替换全部 ${current.occurrences.length} 处引用` : '素材已替换');
   } catch (error) {
     toast(error.message);
@@ -520,9 +621,13 @@ function resizePreview() {
   frame.style.width = width + 'px';
   frame.style.height = height + 'px';
   const stage = $('stage');
-  const availableWidth = Math.max(100, stage.clientWidth - 34);
-  const availableHeight = Math.max(100, stage.clientHeight - 34);
-  const scale = zoom === 'fit' ? Math.min(1, availableWidth / width, availableHeight / height) : Number(zoom);
+  if (!stage.clientWidth || !stage.clientHeight) return;
+  const padding = getComputedStyle(stage);
+  const availableWidth = Math.max(1, stage.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight));
+  const availableHeight = Math.max(1, stage.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom));
+  const scale = zoom === 'fit'
+    ? Math.min(1, availableWidth / width, compactLayout.matches ? 1 : availableHeight / height)
+    : Number(zoom);
   $('frame-wrap').style.width = width + 'px';
   $('frame-wrap').style.height = height + 'px';
   $('frame-wrap').style.transform = `scale(${scale})`;
@@ -534,9 +639,11 @@ function resizePreview() {
 function syncDevice() {
   const value = project.viewport.width + ',' + project.viewport.height;
   $('device').value = [...$('device').options].some(option => option.value === value) ? value : 'custom';
+  document.querySelector('.dimensions').hidden = $('device').value !== 'custom';
 }
 
 $('device').addEventListener('change', () => {
+  document.querySelector('.dimensions').hidden = $('device').value !== 'custom';
   if ($('device').value !== 'custom') {
     const [width, height] = $('device').value.split(',').map(Number);
     project.viewport = {...project.viewport, width, height};
@@ -558,8 +665,13 @@ $('zoom').addEventListener('change', () => { project.viewport.zoom = $('zoom').v
 new ResizeObserver(resizePreview).observe($('stage'));
 
 function switchView(view) {
+  if (view !== 'preview' && document.body.classList.contains('preview-focus')) $('focus-preview').click();
   document.querySelector('.workspace').dataset.view = view;
-  document.querySelectorAll('.mobile-tabs button').forEach(button => button.classList.toggle('active', button.dataset.view === view));
+  document.querySelectorAll('.mobile-tabs button').forEach(button => {
+    const active = button.dataset.view === view;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
   requestAnimationFrame(resizePreview);
 }
 document.querySelectorAll('.mobile-tabs button').forEach(button => button.addEventListener('click', () => switchView(button.dataset.view)));
@@ -570,6 +682,7 @@ $('focus-preview').addEventListener('click', () => {
 });
 
 editor.addEventListener('input', () => {
+  clearSelection();
   changed();
   clearTimeout(historyTimer);
   historyTimer = setTimeout(recordHistory, 450);
@@ -580,7 +693,9 @@ editor.addEventListener('keydown', event => {
     event.preventDefault();
     const start = editor.selectionStart;
     editor.setRangeText('  ', start, editor.selectionEnd, 'end');
+    clearSelection();
     changed();
+    recordHistory();
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); moveHistory(event.shiftKey ? 1 : -1); }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') { event.preventDefault(); moveHistory(1); }
@@ -593,11 +708,19 @@ $('redo').addEventListener('click', () => moveHistory(1));
 $('save-draft').addEventListener('click', () => saveDraft());
 $('project-name').addEventListener('input', () => changed());
 $('refresh-preview').addEventListener('click', renderPreview);
-$('clear-selection').addEventListener('click', () => {
+function clearSelection() {
   selectedNode = null;
   $('element-panel').hidden = true;
+  $('show-element').disabled = true;
+  $('clear-selection').disabled = true;
   $('selected-element').textContent = '点预览中的元素，可视化调节它';
   sendPreview('clear');
+}
+$('clear-selection').addEventListener('click', clearSelection);
+$('show-element').addEventListener('click', () => {
+  document.querySelector('.assets-scroll').scrollTop = 0;
+  switchView('assets');
+  if (!compactLayout.matches) $('element-width').focus({preventScroll: true});
 });
 $('edit-mode').addEventListener('change', () => { editMode = $('edit-mode').checked; sendPreview('edit-mode', {enabled: editMode}); });
 
@@ -635,11 +758,20 @@ $('copy-html').addEventListener('click', async () => {
     await navigator.clipboard.writeText(editor.value);
     toast('HTML 已复制，可以粘贴回酒馆');
   } catch {
+    switchView('code');
     editor.focus();
     editor.select();
-    switchView('code');
     toast('自动复制不可用，已帮你选中全部代码');
   }
+});
+document.querySelectorAll('#mobile-actions [data-action]').forEach(button => {
+  button.addEventListener('click', () => {
+    $('mobile-actions').open = false;
+    $(button.dataset.action).click();
+  });
+});
+document.addEventListener('click', event => {
+  if (!$('mobile-actions').contains(event.target)) $('mobile-actions').open = false;
 });
 
 $('import-file').addEventListener('change', async event => {
@@ -680,6 +812,7 @@ $('format-code').addEventListener('click', () => {
 });
 
 function syncProject() {
+  clearSelection();
   $('project-name').value = project.name;
   editor.value = project.html;
   project.viewport = normalizeViewport(project.viewport);
@@ -700,6 +833,9 @@ function syncProject() {
 }
 
 window.addEventListener('pagehide', () => { if (db) saveDraft(true); });
+document.addEventListener('visibilitychange', () => {
+  if (db && document.visibilityState === 'hidden') saveDraft(true);
+});
 
 try {
   db = await openDB();

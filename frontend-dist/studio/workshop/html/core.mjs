@@ -20,9 +20,9 @@ export function safeResourceUrl(raw) {
 export function classifyAsset(url, context = '') {
   const value = String(url || '');
   const hint = String(context || '').toLowerCase();
-  if (FONT_EXT.test(value) || /font-face|font\//.test(hint)) return 'font';
-  if (AUDIO_EXT.test(value) || /<audio\b|audio\//.test(hint)) return 'music';
-  if (VIDEO_EXT.test(value) || /<video\b|video\//.test(hint)) return 'video';
+  if (FONT_EXT.test(value) || /^data:font\//i.test(value) || /font-face/.test(hint)) return 'font';
+  if (AUDIO_EXT.test(value) || /^data:audio\//i.test(value) || /<audio\b|type\s*=\s*["']audio\//.test(hint)) return 'music';
+  if (VIDEO_EXT.test(value) || /^data:video\//i.test(value) || /<video\b|type\s*=\s*["']video\//.test(hint)) return 'video';
   return 'image';
 }
 
@@ -42,19 +42,22 @@ export function scanAssets(source) {
     occurrences.push({url: clean, start, end, context, type: classifyAsset(clean, context), kind});
   };
 
-  const attributePattern = /\b(src|poster)\s*=\s*(["'])(.*?)\2/gis;
+  const attributePattern = /(?<![\w:-])(src|poster)\s*=\s*(["'])(.*?)\2/gis;
   for (const match of html.matchAll(attributePattern)) {
-    const relative = match[0].indexOf(match[3]);
+    const tag = nearestTag(html, match.index);
+    if (!/^<[a-z]/i.test(tag)) continue;
+    const relative = match[0].indexOf(match[2]) + 1;
     const start = match.index + relative;
-    add(match[3], start, start + match[3].length, nearestTag(html, match.index), match[1].toLowerCase());
+    const kind = match[1].toLowerCase();
+    add(match[3], start, start + match[3].length, kind === 'poster' ? '' : tag, kind);
   }
 
-  const cssPattern = /url\(\s*(["']?)(.*?)\1\s*\)/gis;
+  const cssPattern = /url\((\s*)(["']?)(.*?)\2\s*\)/gis;
   for (const match of html.matchAll(cssPattern)) {
-    const value = match[2];
-    const relative = match[0].indexOf(value);
+    const value = match[3];
+    const relative = 4 + match[1].length + match[2].length;
     const start = match.index + relative;
-    const contextStart = Math.max(0, match.index - 180);
+    const contextStart = Math.max(0, html.lastIndexOf('}', match.index) + 1);
     add(value, start, start + value.length, html.slice(contextStart, match.index + match[0].length), 'css');
   }
 
@@ -102,6 +105,7 @@ export function displayAssetName(url) {
 }
 
 export function normalizeViewport(viewport = {}) {
+  viewport ??= {};
   const clamp = (value, min, max, fallback) => {
     const number = Number(value);
     return Number.isFinite(number) ? Math.min(max, Math.max(min, Math.round(number))) : fallback;

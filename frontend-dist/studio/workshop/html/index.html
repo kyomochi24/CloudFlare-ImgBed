@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#fff5f2">
   <title>HTML 工作台 · 丘丘美化工坊</title>
-  <link rel="stylesheet" href="editor.css?v=20261113a">
-  <script type="module" src="editor.js?v=20261113a"></script>
+  <link rel="stylesheet" href="editor.css?v=20261113b">
+  <script type="module" src="editor.js?v=20261113b"></script>
 </head>
 <body>
   <header class="app-header">
@@ -16,6 +16,14 @@
       <label class="button">导入 HTML / 工程<input id="import-file" type="file" accept=".html,.htm,.txt,.json" hidden></label>
       <button id="copy-html">复制 HTML</button>
       <button id="download-html" class="primary">下载 HTML ↓</button>
+      <details id="mobile-actions" class="mobile-actions">
+        <summary aria-label="文件操作">⋯</summary>
+        <div>
+          <button data-action="import-file">导入 HTML / 工程</button>
+          <button data-action="copy-html">复制 HTML</button>
+          <button data-action="export-project">备份工程</button>
+        </div>
+      </details>
     </div>
   </header>
 
@@ -28,9 +36,9 @@
   </div>
 
   <nav class="mobile-tabs" aria-label="工作区">
-    <button data-view="preview" class="active">◉ 预览</button>
-    <button data-view="code">⌘ HTML</button>
-    <button data-view="assets">✿ 素材</button>
+    <button data-view="preview" class="active" aria-pressed="true">◉ 预览</button>
+    <button data-view="code" aria-pressed="false">⌘ HTML</button>
+    <button data-view="assets" aria-pressed="false">✿ 素材</button>
   </nav>
 
   <main class="workspace" data-view="preview">
@@ -45,13 +53,13 @@
       <div class="panel-title"><div><span class="dot"></span> 实时预览 <small id="viewport-label">390 × 760</small></div><button id="focus-preview">⛶ 展开</button></div>
       <div class="preview-toolbar">
         <label>尺寸<select id="device"><option value="390,760">手机气泡 · 390</option><option value="430,820">大屏手机 · 430</option><option value="720,760">PC 气泡 · 720</option><option value="1000,800">PC 宽屏 · 1000</option><option value="custom">自定义</option></select></label>
-        <div class="dimensions"><label>宽<input id="vp-width" type="number" min="260" max="1600" value="390"></label><span>×</span><label>高<input id="vp-height" type="number" min="320" max="1600" value="760"></label></div>
+        <div class="dimensions" hidden><label>宽<input id="vp-width" type="number" min="260" max="1600" value="390"></label><span>×</span><label>高<input id="vp-height" type="number" min="320" max="1600" value="760"></label></div>
         <label>查看缩放<select id="zoom"><option value="fit">适应窗口</option><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option></select></label>
-        <label>预览名字<input id="placeholder-user" value="你" aria-label="用户占位符预览值"></label>
-        <label><input id="edit-mode" type="checkbox"> 拖动 / 缩放</label>
+        <label class="preview-name">预览名字<input id="placeholder-user" value="你" aria-label="用户占位符预览值"></label>
+        <label class="drag-toggle"><input id="edit-mode" type="checkbox"> 拖动 / 缩放</label>
       </div>
       <div class="preview-stage" id="stage"><div id="frame-space"><div id="frame-wrap" class="device-frame"><iframe id="preview" title="隔离的 HTML 效果预览" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe></div></div></div>
-      <div class="preview-footer"><span id="selected-element">点预览中的元素，可视化调节它</span><button id="refresh-preview">刷新</button><button id="clear-selection">取消选择</button></div>
+      <div class="preview-footer"><span id="selected-element">点预览中的元素，可视化调节它</span><button id="show-element" disabled>调节</button><button id="refresh-preview">刷新</button><button id="clear-selection" disabled>取消选择</button></div>
     </section>
 
     <aside class="assets-pane" aria-label="当前作品的素材和元素调节">
@@ -75,8 +83,8 @@
           <div class="pair"><label>圆角 px<input id="element-radius" type="number" min="0" max="999" placeholder="0"></label><label>显示方式<select id="element-fit"><option value="">保持原样</option><option value="cover">裁切填满</option><option value="contain">完整显示</option><option value="fill">拉伸填满</option></select></label></div>
           <label>图片焦点 <output id="object-position-value">50% 50%</output><input id="object-position-x" type="range" min="0" max="100" value="50"><input id="object-position-y" type="range" min="0" max="100" value="50"></label>
           <div class="align-actions"><button data-align="left">居左</button><button data-align="center">居中</button><button data-align="right">居右</button></div>
-          <button id="reset-element" class="wide">清除工作台添加的调整</button>
-          <p class="hint">开启预览上方的“拖动 / 缩放”后，元素会出现移动点和右下角缩放点。手机端开启时会暂时阻止预览滚动。</p>
+          <button id="reset-element" class="wide">清除这些内联样式</button>
+          <p class="hint">开启“拖动 / 缩放”后，拖左上角移动，拖右下角改大小。</p>
         </section>
 
         <section class="tool-card placeholders">
@@ -89,7 +97,11 @@
     </aside>
   </main>
 
-  <audio id="audio-preview" controls hidden></audio>
+  <div id="media-preview" hidden>
+    <button id="close-media" aria-label="关闭试听">×</button>
+    <audio id="audio-preview" controls hidden></audio>
+    <video id="video-preview" controls playsinline hidden></video>
+  </div>
   <div id="toast" role="status" hidden></div>
 
   <dialog id="template-dialog">
