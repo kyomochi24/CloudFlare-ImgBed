@@ -477,7 +477,7 @@ function locateAsset(asset = assets.find(item => item.url === selectedAssetUrl))
   editor.focus();
   editor.setSelectionRange(occurrence.start, occurrence.end);
   const before = editor.value.slice(0, occurrence.start).split('\n').length - 1;
-  editor.scrollTop = Math.max(0, (before - 4) * 19.4);
+  editor.scrollTop = Math.max(0, (before - 4) * parseFloat(getComputedStyle(editor).lineHeight));
 }
 
 function playAsset(url) {
