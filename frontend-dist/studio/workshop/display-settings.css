@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
-:root[data-studio-font-size="small"] { font-size: 90%; }
-:root[data-studio-font-size="large"] { font-size: 115%; }
+:root { font-size: var(--studio-font-scale, 100%); }
 
 .studio-display {
   position: relative;
@@ -58,6 +57,36 @@
 .studio-font-options small { font-size: .6875rem; }
 .studio-font-options input:checked + span { background: #ffe6ef; border-color: #bc7b92; }
 .studio-font-options input:focus-visible + span { outline: 2px solid #a95678; outline-offset: 1px; }
+.studio-font-custom { margin-top: 10px; padding-top: 8px; border-top: 1px solid #efcbd2; }
+.studio-font-custom > div { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.studio-font-custom label { font-size: .8125rem; }
+.studio-font-custom output { color: #9b4768; font-size: .875rem; font-variant-numeric: tabular-nums; }
+.studio-font-custom input[type="range"] {
+  display: block;
+  width: 100%;
+  height: 36px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  accent-color: #a95678;
+  cursor: pointer;
+}
+.studio-font-limits { color: #795d6a; font-size: .6875rem; }
+.studio-font-actions { display: grid; grid-template-columns: 1fr 1.2fr; gap: 5px; margin-top: 7px; }
+.studio-font-actions button {
+  min-height: 40px;
+  padding: 4px;
+  border: 1px solid #dcb0c0;
+  border-radius: 8px;
+  background: #fff3f7;
+  color: #75485c;
+  white-space: normal;
+  font: inherit;
+  font-size: .75rem;
+  cursor: pointer;
+}
+.studio-font-status { margin: 6px 0 0; color: #75485c; font-size: .75rem; }
 
 .topbar { gap: 12px; }
 .topbar nav { flex-wrap: wrap; justify-content: center; gap: 8px 14px; }
@@ -79,4 +108,17 @@
   .app-header .brand h1 { overflow-wrap: anywhere; }
   .app-header .brand { flex: 1; }
   .app-header .header-actions { flex: none; }
+}
+
+@media (max-width: 620px) {
+  .studio-display { align-self: flex-start; }
+  .app-header .studio-display { margin-left: auto; }
+  [data-studio-font-enlarged] .app-header { height: auto; min-height: 54px; align-items: center; flex-wrap: wrap; }
+  [data-studio-font-enlarged] .app-header .brand { flex: 1; }
+  [data-studio-font-enlarged] .app-header .header-actions { order: 2; flex: 0 0 100%; flex-wrap: wrap; justify-content: flex-end; }
+  [data-studio-font-enlarged] .preview-toolbar { overflow-wrap: anywhere; }
+  [data-studio-font-enlarged] .preview-footer { flex-wrap: wrap; }
+  [data-studio-font-enlarged] .preview-footer > :first-child { min-width: 0; }
+  [data-studio-font-enlarged] .project-bar { flex-wrap: wrap; }
+  [data-studio-font-enlarged] .mobile-tabs { height: auto; }
 }
