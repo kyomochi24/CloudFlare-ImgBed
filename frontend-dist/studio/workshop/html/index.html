@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#fff5f2">
+  <title>HTML 工作台 · 丘丘美化工坊</title>
+  <link rel="stylesheet" href="editor.css?v=20261113a">
+  <script type="module" src="editor.js?v=20261113a"></script>
+</head>
+<body>
+  <header class="app-header">
+    <a class="back" href="../" aria-label="返回美化工坊">←</a>
+    <div class="brand"><span>✿</span><div><h1>HTML 工作台</h1><p>预览、换素材、调大小，在一个页面完成。</p></div></div>
+    <div class="header-actions">
+      <label class="button">导入 HTML / 工程<input id="import-file" type="file" accept=".html,.htm,.txt,.json" hidden></label>
+      <button id="copy-html">复制 HTML</button>
+      <button id="download-html" class="primary">下载 HTML ↓</button>
+    </div>
+  </header>
+
+  <div class="project-bar">
+    <label>作品名称 <input id="project-name" maxlength="100" value="我的开场白"></label>
+    <span id="save-state" role="status">正在打开草稿…</span>
+    <button id="save-draft">保存草稿</button>
+    <button id="export-project">备份工程</button>
+    <button id="open-templates">从模板新建</button>
+  </div>
+
+  <nav class="mobile-tabs" aria-label="工作区">
+    <button data-view="preview" class="active">◉ 预览</button>
+    <button data-view="code">⌘ HTML</button>
+    <button data-view="assets">✿ 素材</button>
+  </nav>
+
+  <main class="workspace" data-view="preview">
+    <section class="code-pane" aria-label="HTML 代码编辑器">
+      <div class="panel-title"><span>⌘ HTML / CSS <small id="line-count">1 行</small></span><div><button id="undo" title="撤销">↶</button><button id="redo" title="重做">↷</button><button id="format-code" title="整理基础缩进">整理</button></div></div>
+      <div class="code-help"><span>输入后自动预览</span><span>点素材可定位代码</span></div>
+      <div class="code-area"><div id="line-numbers" aria-hidden="true">1</div><textarea id="html-editor" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off" aria-label="HTML 和 CSS 代码"></textarea></div>
+      <div class="code-footer"><span id="render-state">准备预览中…</span><span>Tab 缩进 · Ctrl/⌘ Z 撤销 · Ctrl/⌘ S 保存</span></div>
+    </section>
+
+    <section class="preview-pane" aria-label="HTML 效果预览">
+      <div class="panel-title"><div><span class="dot"></span> 实时预览 <small id="viewport-label">390 × 760</small></div><button id="focus-preview">⛶ 展开</button></div>
+      <div class="preview-toolbar">
+        <label>尺寸<select id="device"><option value="390,760">手机气泡 · 390</option><option value="430,820">大屏手机 · 430</option><option value="720,760">PC 气泡 · 720</option><option value="1000,800">PC 宽屏 · 1000</option><option value="custom">自定义</option></select></label>
+        <div class="dimensions"><label>宽<input id="vp-width" type="number" min="260" max="1600" value="390"></label><span>×</span><label>高<input id="vp-height" type="number" min="320" max="1600" value="760"></label></div>
+        <label>查看缩放<select id="zoom"><option value="fit">适应窗口</option><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option></select></label>
+        <label>预览名字<input id="placeholder-user" value="你" aria-label="用户占位符预览值"></label>
+        <label><input id="edit-mode" type="checkbox"> 拖动 / 缩放</label>
+      </div>
+      <div class="preview-stage" id="stage"><div id="frame-space"><div id="frame-wrap" class="device-frame"><iframe id="preview" title="隔离的 HTML 效果预览" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe></div></div></div>
+      <div class="preview-footer"><span id="selected-element">点预览中的元素，可视化调节它</span><button id="refresh-preview">刷新</button><button id="clear-selection">取消选择</button></div>
+    </section>
+
+    <aside class="assets-pane" aria-label="当前作品的素材和元素调节">
+      <div class="panel-title"><span>✿ 当前作品的素材</span><small id="asset-count">0 个</small></div>
+      <div class="asset-tabs" role="tablist"><button data-filter="all" class="active">全部 <span id="count-all">0</span></button><button data-filter="image">图片 <span id="count-image">0</span></button><button data-filter="font">字体 <span id="count-font">0</span></button><button data-filter="music">音乐 <span id="count-music">0</span></button></div>
+      <div class="assets-scroll">
+        <div id="asset-list" class="asset-list"><p class="empty">当前代码里还没有识别到素材。</p></div>
+
+        <section id="asset-replace-panel" class="tool-card" hidden>
+          <div class="tool-card-title"><strong id="selected-asset-name">替换素材</strong><button id="locate-asset">定位代码</button></div>
+          <label>替换范围<select id="replace-scope"><option value="one">只替换第 1 处</option><option value="all">替换全部引用</option></select></label>
+          <button id="load-albums" class="wide">读取我的图床相册</button>
+          <div class="album-row"><select id="album-list" aria-label="选择图床相册"><option value="">请先读取相册</option></select><button id="more-assets" hidden>更多</button></div>
+          <div id="album-assets" class="album-assets"></div>
+          <p id="album-status" class="hint">选择上方作品素材后，再从相册中点选新素材。</p>
+        </section>
+
+        <section id="element-panel" class="tool-card" hidden>
+          <div class="tool-card-title"><strong>选中元素</strong><code id="element-label">—</code></div>
+          <div class="pair"><label>宽度 px<input id="element-width" type="number" min="0" max="2000" placeholder="自动"></label><label>高度 px<input id="element-height" type="number" min="0" max="2000" placeholder="自动"></label></div>
+          <div class="pair"><label>圆角 px<input id="element-radius" type="number" min="0" max="999" placeholder="0"></label><label>显示方式<select id="element-fit"><option value="">保持原样</option><option value="cover">裁切填满</option><option value="contain">完整显示</option><option value="fill">拉伸填满</option></select></label></div>
+          <label>图片焦点 <output id="object-position-value">50% 50%</output><input id="object-position-x" type="range" min="0" max="100" value="50"><input id="object-position-y" type="range" min="0" max="100" value="50"></label>
+          <div class="align-actions"><button data-align="left">居左</button><button data-align="center">居中</button><button data-align="right">居右</button></div>
+          <button id="reset-element" class="wide">清除工作台添加的调整</button>
+          <p class="hint">开启预览上方的“拖动 / 缩放”后，元素会出现移动点和右下角缩放点。手机端开启时会暂时阻止预览滚动。</p>
+        </section>
+
+        <section class="tool-card placeholders">
+          <strong>占位符预览</strong>
+          <label><code>{{user}}</code><input id="sample-user" value="你"></label>
+          <label><code>{{char}}</code><input id="sample-char" value="浅浅丘"></label>
+          <p class="hint">只改变预览，复制和下载时仍保留原占位符。</p>
+        </section>
+      </div>
+    </aside>
+  </main>
+
+  <audio id="audio-preview" controls hidden></audio>
+  <div id="toast" role="status" hidden></div>
+
+  <dialog id="template-dialog">
+    <button id="close-templates" class="dialog-close" aria-label="关闭">×</button>
+    <p class="eyebrow">START A LITTLE PAGE</p><h2>从哪一种开始？</h2>
+    <div class="template-grid"><button data-template="opening"><strong>开场白卡片</strong><span>适合剧情开场和欢迎语</span></button><button data-template="status"><strong>角色状态栏</strong><span>头像、地点、心情和好感</span></button></div>
+    <p class="hint">套用模板会替换当前代码。当前作品会继续保留在撤销记录中。</p>
+  </dialog>
+</body>
+</html>
