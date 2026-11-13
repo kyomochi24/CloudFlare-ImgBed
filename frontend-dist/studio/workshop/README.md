@@ -4,7 +4,8 @@ A static, isolated SillyTavern appearance editor. SPDX-License-Identifier: AGPL-
 
 ## Files
 
-- `index.html`, `editor.css`, `editor.js`: responsive editor, dimensions/zoom, theme/project import and export, IndexedDB draft, read-only Studio album picker.
+- `index.html`, `editor.css`, `editor.js`: responsive CSS appearance editor, dimensions/zoom, theme/project import and export, IndexedDB draft, read-only Studio album picker.
+- `html/`: responsive HTML workbench with isolated live preview, asset thumbnails, same-origin Studio album replacement, font/audio recognition, element selection, inline sizing and drag/resize controls.
 - `core.mjs`: pure import/export, viewport normalization, image URL validation and reversible avatar CSS patches.
 - `frame.html`: selected DOM fragments from SillyTavern 1.19.0 commit `06bde939fb1e9c4c8d8641d810f0a916b5bce127`; simplified drawer contents.
 - `frame.css`, `frame.js`: preview-only glue and simulated UI state. No SillyTavern API or original chat runtime is loaded.
@@ -73,3 +74,14 @@ Browser tests require Playwright and Chromium. Set PLAYWRIGHT_MODULE to an insta
 ## 2026-11-06 · Composer correction
 
 Removed the two continue/impersonate composer nodes and their UI switch. Legacy composerActions is normalized to false. Added the theme-compatible quick-reply-rocket-button QR assistant sample and input_helper_toolbar; it inserts local text only. Existing menu actions remain appearance samples.
+
+## 2026-11-13 · HTML workbench
+
+- Added a separate HTML workbench at `/studio/workshop/html/` for greeting cards, status panels and other message HTML. Existing CSS theme editing remains unchanged.
+- Imported HTML is rendered in an opaque sandbox. Scripts, frames, forms, event-handler attributes and JavaScript URLs are removed from the preview. Images, audio/video, fonts, inline CSS and HTTPS stylesheets can render under a restrictive CSP.
+- The current-project asset list groups repeated image, font and media URLs and shows visual thumbnails or type previews. A selected URL can be replaced once or everywhere from the existing read-only Studio album API.
+- Clicking preview content selects its source element. Numeric size, radius, fit, crop focus and alignment controls write inline styles back to the HTML. An explicit edit mode exposes move and resize handles and writes the resulting style on pointer release.
+- Desktop uses code, preview and material columns. Mobile uses preview/code/material tabs, a fitted device preview and touch-sized controls. `{{user}}` and `{{char}}` sample values affect preview only.
+- HTML drafts use a separate IndexedDB database. HTML and project downloads, clipboard export, undo/redo and two starter templates are included.
+
+Validation: HTML asset scanning/replacement/project unit tests pass. The preview bridge is syntax-checked separately. Browser automation is included in `tests/html-workbench-browser.mjs`; production login APIs and native iOS/Tauri rendering still require deployment checks.
