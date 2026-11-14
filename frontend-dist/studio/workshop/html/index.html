@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#fff5f2">
   <title>HTML 工作台 · 丘丘美化工坊</title>
   <script src="../display-settings.js?v=2"></script>
-  <link rel="stylesheet" href="editor.css?v=display1">
+  <link rel="stylesheet" href="editor.css?v=preview-mode1">
   <link rel="stylesheet" href="../display-settings.css?v=2">
-  <script type="module" src="editor.js?v=display1"></script>
+  <script type="module" src="editor.js?v=preview-mode1"></script>
 </head>
 <body>
   <header class="app-header">
@@ -54,14 +54,17 @@
     <section class="preview-pane" aria-label="HTML 效果预览">
       <div class="panel-title"><div><span class="dot"></span> 实时预览 <small id="viewport-label">390 × 760</small></div><button id="focus-preview">⛶ 展开</button></div>
       <div class="preview-toolbar">
+        <div class="preview-modes" role="group" aria-label="预览模式">
+          <button type="button" data-preview-mode="play" aria-pressed="true">试玩</button>
+          <button type="button" data-preview-mode="edit" aria-pressed="false">编辑</button>
+        </div>
         <label>尺寸<select id="device"><option value="390,760">手机气泡 · 390</option><option value="430,820">大屏手机 · 430</option><option value="720,760">PC 气泡 · 720</option><option value="1000,800">PC 宽屏 · 1000</option><option value="custom">自定义</option></select></label>
         <div class="dimensions" hidden><label>宽<input id="vp-width" type="number" min="260" max="1600" value="390"></label><span>×</span><label>高<input id="vp-height" type="number" min="320" max="1600" value="760"></label></div>
         <label>查看缩放<select id="zoom"><option value="fit">适应窗口</option><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option></select></label>
         <label class="preview-name">预览名字<input id="placeholder-user" value="你" aria-label="用户占位符预览值"></label>
-        <label class="drag-toggle"><input id="edit-mode" type="checkbox"> 拖动 / 缩放</label>
       </div>
       <div class="preview-stage" id="stage"><div id="frame-space"><div id="frame-wrap" class="device-frame"><iframe id="preview" title="隔离的 HTML 效果预览" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe></div></div></div>
-      <div class="preview-footer"><span id="selected-element">点预览中的元素，可视化调节它</span><button id="show-element" disabled>调节</button><button id="refresh-preview">刷新</button><button id="clear-selection" disabled>取消选择</button></div>
+      <div class="preview-footer"><span id="selected-element">可试用 CSS / HTML 交互 · 自定义脚本关闭</span><button id="show-element" disabled>调节</button><button id="refresh-preview">刷新</button><button id="clear-selection" disabled>取消选择</button></div>
     </section>
 
     <aside class="assets-pane" aria-label="当前作品的素材和元素调节">
@@ -86,7 +89,7 @@
           <label>图片焦点 <output id="object-position-value">50% 50%</output><input id="object-position-x" type="range" min="0" max="100" value="50"><input id="object-position-y" type="range" min="0" max="100" value="50"></label>
           <div class="align-actions"><button data-align="left">居左</button><button data-align="center">居中</button><button data-align="right">居右</button></div>
           <button id="reset-element" class="wide">清除这些内联样式</button>
-          <p class="hint">开启“拖动 / 缩放”后，拖左上角移动，拖右下角改大小。</p>
+          <p class="hint">在“编辑”模式下，拖左上角移动，拖右下角改大小。</p>
         </section>
 
         <section class="tool-card placeholders">

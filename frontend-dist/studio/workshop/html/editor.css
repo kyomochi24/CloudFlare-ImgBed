@@ -11,8 +11,9 @@ body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 .device-frame { position: absolute; top: 0; left: 0; }
 .preview-toolbar, .preview-footer { flex-shrink: 0; }
 .preview-footer button { padding-inline: 8px; }
-.drag-toggle { border: 1px solid var(--line); border-radius: 9px; padding: 6px 8px; cursor: pointer; }
-.drag-toggle:has(input:checked) { background: #fff0f5; color: var(--pink-dark); border-color: #dfaebe; }
+.preview-modes { display: inline-flex; gap: 3px; padding: 2px; border: 1px solid var(--line); border-radius: 11px; background: #fff8f9; }
+.preview-modes button { min-height: 31px; padding: 4px 10px; border-color: transparent; background: transparent; }
+.preview-modes button[aria-pressed="true"] { background: #ffe8f0; color: var(--pink-dark); border-color: #dfaebe; }
 .dimensions label { font-size: 0.6875rem; }
 .assets-scroll { display: flex; flex-direction: column; }
 .assets-scroll > * { flex: none; }
@@ -53,8 +54,7 @@ body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
   .workspace[data-view="assets"] .assets-pane { display: flex; }
   .preview-toolbar { gap: 6px; }
   .preview-toolbar label { font-size: 0.6875rem; }
-  .drag-toggle { min-height: 36px; }
-  .drag-toggle input { width: 16px; height: 16px; }
+  .preview-modes button { min-height: 40px; }
   #show-element { display: inline-flex; }
   .preview-stage { padding: 12px; }
   .preview-footer, .code-footer { padding-bottom: max(7px, env(safe-area-inset-bottom)); }

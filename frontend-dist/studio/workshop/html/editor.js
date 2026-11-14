@@ -232,9 +232,52 @@ function startDrag(event) {
   button.addEventListener('pointermove', move);
   for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) button.addEventListener(type, end);
 }
-document.addEventListener('click',event=>{if(!event.target.closest||event.target.closest('#qiuqiu-workbench-overlay'))return;const target=event.target.closest('[data-qiuqiu-node]');if(!target)return;event.preventDefault();event.stopPropagation();select(target)},true);
+document.addEventListener('click', event => {
+  const element = event.target;
+  if (!element.closest || element.closest('#qiuqiu-workbench-overlay')) return;
+  // Keep the preview in its current document when trying native controls.
+  if (element.closest('a[href], area[href], a[*|href]')) event.preventDefault();
+  if (!editMode) return;
+  const target = element.closest('[data-qiuqiu-node]');
+  if (!target) return;
+  event.preventDefault();
+  event.stopPropagation();
+  select(target);
+}, true);
 addEventListener('scroll',placeOverlay,true);addEventListener('resize',placeOverlay);
-addEventListener('message',event=>{const data=event.data;if(event.source!==parent||data?.channel!==channel)return;if(data.type==='edit-mode'){editMode=!!data.enabled;placeOverlay()}if(data.type==='select'){const target=document.querySelector('[data-qiuqiu-node="'+CSS.escape(String(data.id))+'"]');select(target,false)}if(data.type==='select-asset'){let target=null;for(const element of document.querySelectorAll('[data-qiuqiu-node]')){if([element.getAttribute('src'),element.getAttribute('poster')].includes(data.url)||getComputedStyle(element).backgroundImage.includes(data.url)){target=element;break}}if(target){select(target);target.scrollIntoView({block:'center',inline:'center'})}}if(data.type==='clear')select(null,false)});
+document.addEventListener('transitionend', placeOverlay, true);
+addEventListener('message', event => {
+  const data = event.data;
+  if (event.source !== parent || data?.channel !== channel) return;
+  if (data.type === 'edit-mode') {
+    editMode = !!data.enabled;
+    if (!editMode) select(null, false);
+    return;
+  }
+  if (data.type === 'clear') select(null, false);
+  if (!editMode) return;
+  if (data.type === 'select') {
+    const target = document.querySelector('[data-qiuqiu-node="' + CSS.escape(String(data.id)) + '"]');
+    select(target, false);
+  }
+  if (data.type === 'apply-style' && selected?.dataset.qiuqiuNode === data.id) {
+    for (const [property, value] of Object.entries(data.properties)) {
+      if (value === '' || value === null) selected.style.removeProperty(property);
+      else selected.style.setProperty(property, value);
+    }
+    placeOverlay();
+    tell('selected', describe(selected));
+  }
+  if (data.type === 'select-asset') {
+    const candidates = [...document.querySelectorAll('[data-qiuqiu-node]')];
+    const target = candidates.find(element =>
+      [element.getAttribute('src'), element.getAttribute('poster')].includes(data.url) ||
+      getComputedStyle(element).backgroundImage.includes(data.url));
+    if (!target) return;
+    select(target);
+    target.scrollIntoView({block: 'center', inline: 'center'});
+  }
+});
 tell('ready',{width:innerWidth,height:innerHeight});
 })()</script>`;
 }
@@ -280,7 +323,7 @@ window.addEventListener('message', event => {
     sendPreview('edit-mode', {enabled: editMode});
     if (selectedNode) sendPreview('select', {id: selectedNode.id});
   }
-  if (previewSource !== editor.value) return;
+  if (!editMode || previewSource !== editor.value) return;
   if (data.type === 'selected') selectNode(data);
   if (data.type === 'style-change' && data.id === selectedNode?.id) {
     mutateNode(data.id, node => {
@@ -307,9 +350,13 @@ function serializeSource(documentNode) {
 function mutateNode(id, mutator, {skipPreview = false} = {}) {
   const documentNode = parseSource();
   const node = editableNodes(documentNode)[Number(id)];
-  if (!node) return toast('代码已经变化，请重新点选元素');
+  if (!node) {
+    toast('代码已经变化，请重新点选元素');
+    return false;
+  }
   mutator(node);
   setCode(serializeSource(documentNode), {immediate: true, keepSelection: true, skipPreview});
+  return true;
 }
 
 function selectNode(data) {
@@ -330,13 +377,16 @@ function selectNode(data) {
 }
 
 function styleSelected(properties) {
-  if (!selectedNode) return toast('请先点击预览中的元素');
-  mutateNode(selectedNode.id, node => {
+  if (!editMode || !selectedNode) return toast('请在编辑模式中点选元素');
+  const id = selectedNode.id;
+  const keepPreview = previewReady && previewSource === editor.value;
+  const updated = mutateNode(id, node => {
     for (const [property, value] of Object.entries(properties)) {
       if (value === '' || value === null) node.style.removeProperty(property);
       else node.style.setProperty(property, value);
     }
-  });
+  }, {skipPreview: keepPreview});
+  if (updated && keepPreview) sendPreview('apply-style', {id, properties});
 }
 
 function updateObjectPositionLabel() {
@@ -713,7 +763,9 @@ function clearSelection() {
   $('element-panel').hidden = true;
   $('show-element').disabled = true;
   $('clear-selection').disabled = true;
-  $('selected-element').textContent = '点预览中的元素，可视化调节它';
+  $('selected-element').textContent = editMode
+    ? '点选元素后，可以拖动或缩放'
+    : '可试用 CSS / HTML 交互 · 自定义脚本关闭';
   sendPreview('clear');
 }
 $('clear-selection').addEventListener('click', clearSelection);
@@ -722,7 +774,18 @@ $('show-element').addEventListener('click', () => {
   switchView('assets');
   if (!compactLayout.matches) $('element-width').focus({preventScroll: true});
 });
-$('edit-mode').addEventListener('change', () => { editMode = $('edit-mode').checked; sendPreview('edit-mode', {enabled: editMode}); });
+document.querySelectorAll('[data-preview-mode]').forEach(button => {
+  button.addEventListener('click', () => {
+    const next = button.dataset.previewMode === 'edit';
+    if (next === editMode) return;
+    editMode = next;
+    for (const option of document.querySelectorAll('[data-preview-mode]')) {
+      option.setAttribute('aria-pressed', String(option === button));
+    }
+    clearSelection();
+    sendPreview('edit-mode', {enabled: editMode});
+  });
+});
 
 for (const id of ['sample-user', 'sample-char']) $(id).addEventListener('input', () => {
   project.placeholders = {user: $('sample-user').value, char: $('sample-char').value};
