@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#fff5f2">
   <title>HTML 工作台 · 丘丘美化工坊</title>
   <script src="../display-settings.js?v=2"></script>
-  <link rel="stylesheet" href="editor.css?v=split1">
+  <link rel="stylesheet" href="editor.css?v=copyfind1">
   <link rel="stylesheet" href="../display-settings.css?v=2">
-  <script type="module" src="editor.js?v=split1"></script>
+  <script type="module" src="editor.js?v=copyfind1"></script>
 </head>
 <body>
   <header class="app-header">
@@ -51,6 +51,14 @@
       <div class="code-help">
         <label for="code-size">代码字号</label><select id="code-size"><option value="12">12 px</option><option value="14">14 px</option><option value="16">16 px</option><option value="18">18 px</option><option value="20">20 px</option><option value="22">22 px</option><option value="24">24 px</option></select>
         <button id="code-wrap" type="button" aria-pressed="true">自动换行</button>
+        <button id="open-code-find" type="button" aria-expanded="false" aria-controls="code-find">⌕ 查找</button>
+      </div>
+      <div id="code-find" class="code-find" role="search" aria-label="查找代码" hidden>
+        <input id="code-query" type="search" aria-label="查找代码" placeholder="查找代码或文案" autocomplete="off" spellcheck="false">
+        <output id="code-find-count" aria-live="polite">—</output>
+        <button id="code-find-prev" type="button" aria-label="上一个结果" title="上一个结果 · Shift+Enter">↑</button>
+        <button id="code-find-next" type="button" aria-label="下一个结果" title="下一个结果 · Enter">↓</button>
+        <button id="close-code-find" type="button" aria-label="关闭查找">×</button>
       </div>
       <div class="code-area" data-wrap="true">
         <div id="line-numbers" aria-hidden="true"><div id="line-number-content"></div></div>
@@ -81,7 +89,7 @@
 
     <aside id="workbench-assets" class="assets-pane" aria-label="当前作品的素材和元素调节">
       <div class="panel-title"><span>✿ 当前作品的素材 <small id="asset-count">0 个</small></span><button id="close-assets" type="button" aria-label="关闭素材面板">×</button></div>
-      <div class="asset-tabs" role="tablist"><button data-filter="all" class="active">全部 <span id="count-all">0</span></button><button data-filter="image">图片 <span id="count-image">0</span></button><button data-filter="font">字体 <span id="count-font">0</span></button><button data-filter="music">音乐 <span id="count-music">0</span></button></div>
+      <div class="asset-tabs" role="group" aria-label="素材分类"><button data-filter="all" class="active" aria-pressed="true" title="全部图片、字体和音视频">全部 <span id="count-all">0</span></button><button data-filter="image" aria-pressed="false">图片 <span id="count-image">0</span></button><button data-filter="font" aria-pressed="false">字体 <span id="count-font">0</span></button><button data-filter="music" aria-pressed="false">音乐 <span id="count-music">0</span></button><button data-filter="text" aria-pressed="false">文字 <span id="count-text">0</span></button></div>
       <div class="assets-scroll">
         <div id="asset-list" class="asset-list"><p class="empty">当前代码里还没有识别到素材。</p></div>
 

@@ -2,13 +2,15 @@
 import {
   TEMPLATES,
   displayAssetName,
+  findCodeMatches,
   freshProject,
   normalizeProject,
   normalizeViewport,
   replaceAssetUrl,
   safeResourceUrl,
-  scanAssets
-} from './core.mjs?v=split1';
+  scanAssets,
+  scanTextFragments
+} from './core.mjs?v=copyfind1';
 
 const $ = id => document.getElementById(id);
 const editor = $('html-editor');
@@ -30,6 +32,8 @@ let db;
 let history = [];
 let historyIndex = -1;
 let assets = [];
+let textFragments = [];
+let scannedTextSource;
 let assetFilter = 'all';
 let selectedAssetUrl = '';
 let selectedNode = null;
@@ -48,6 +52,8 @@ let codeShare = Number(preferences.codeShare) || 50;
 let located = null;
 let paintedSource;
 let codeMeasureFrame;
+let findMatches = [];
+let findIndex = -1;
 
 function rememberLayout(changes) {
   preferences = {...preferences, ...changes};
@@ -176,7 +182,10 @@ function changed({immediate = false, skipPreview = false} = {}) {
 
 function updateLines() {
   const source = editor.value;
-  if (paintedSource !== source) located = null;
+  if (paintedSource !== source) {
+    located = null;
+    refreshCodeFind();
+  }
   paintedSource = source;
   const links = assets.flatMap(asset => asset.occurrences).sort((a, b) => a.start - b.start);
   const codes = document.createDocumentFragment();
@@ -202,23 +211,43 @@ function updateLines() {
         } else code.append(part);
       }
     }
+    function appendSegment(start, end, isLink = false) {
+      function piece(from, to, highlight) {
+        if (to <= from) return;
+        const value = source.slice(from, to);
+        if (!isLink && !highlight) {
+          appendText(value);
+          return;
+        }
+        const span = document.createElement('span');
+        if (isLink) span.classList.add('code-url');
+        if (highlight) span.classList.add('code-location', 'located');
+        span.textContent = value;
+        code.append(span);
+      }
+      if (!located || located.end <= start || located.start >= end) {
+        piece(start, end, false);
+        return;
+      }
+      const from = Math.max(start, located.start);
+      const to = Math.min(end, located.end);
+      piece(start, from, false);
+      piece(from, to, true);
+      piece(to, end, false);
+    }
     while (links[linkIndex]?.start < limit) {
       const link = links[linkIndex];
       const start = Math.max(position, link.start);
       const end = Math.min(limit, link.end);
       if (end > start) {
-        appendText(source.slice(position, start));
-        const span = document.createElement('span');
-        span.className = 'code-url';
-        if (located?.start === link.start && located.end === link.end) span.classList.add('located');
-        span.textContent = source.slice(start, end);
-        code.append(span);
+        appendSegment(position, start);
+        appendSegment(start, end, true);
         position = end;
       }
       if (link.end > limit) break;
       linkIndex++;
     }
-    appendText(source.slice(position, limit));
+    appendSegment(position, limit);
     offset = limit + 1;
     codes.append(code);
     numbers.append(number);
@@ -522,18 +551,62 @@ function typeForFilter(asset) {
 
 function renderAssetList() {
   assets = scanAssets(editor.value);
+  if (scannedTextSource !== editor.value) {
+    scannedTextSource = editor.value;
+    const decoder = document.createElement('textarea');
+    textFragments = scanTextFragments(editor.value).map(fragment => {
+      decoder.innerHTML = fragment.text.replaceAll('<', '&lt;');
+      return {...fragment, display: decoder.value.replace(/\s+/g, ' ').trim()};
+    }).filter(fragment => fragment.display);
+  }
   const counts = {image: 0, font: 0, music: 0};
   for (const asset of assets) counts[typeForFilter(asset)] = (counts[typeForFilter(asset)] || 0) + 1;
   $('asset-count').textContent = assets.length + ' 个';
   $('asset-button-count').textContent = assets.length;
   $('count-all').textContent = assets.length;
+  $('count-text').textContent = textFragments.length;
   for (const type of ['image', 'font', 'music']) $(`count-${type}`).textContent = counts[type] || 0;
   const visible = assets.filter(asset => assetFilter === 'all' || typeForFilter(asset) === assetFilter);
   $('asset-list').replaceChildren();
-  if (selectedAssetUrl && !assets.some(asset => asset.url === selectedAssetUrl)) {
+  const selectedAsset = assets.find(asset => asset.url === selectedAssetUrl);
+  if (selectedAssetUrl && !selectedAsset) {
     selectedAssetUrl = '';
     ++albumRequest;
     $('asset-replace-panel').hidden = true;
+  }
+  $('asset-replace-panel').hidden = assetFilter === 'text' || !selectedAsset;
+  if (assetFilter === 'text') {
+    if (!textFragments.length) {
+      const empty = document.createElement('p');
+      empty.className = 'empty';
+      empty.textContent = '还没有找到 HTML 正文里的文案。';
+      $('asset-list').append(empty);
+      return;
+    }
+    const list = document.createDocumentFragment();
+    let line = 1;
+    let cursor = 0;
+    for (const fragment of textFragments) {
+      for (; cursor < fragment.start; cursor++) {
+        if (editor.value[cursor] === '\n') line++;
+      }
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'asset-card text-card';
+      const content = document.createElement('span');
+      const title = document.createElement('strong');
+      title.textContent = fragment.display;
+      const lineNumber = document.createElement('small');
+      lineNumber.textContent = `第 ${line} 行`;
+      content.append(title, lineNumber);
+      const action = document.createElement('span');
+      action.textContent = '定位';
+      button.append(content, action);
+      button.addEventListener('click', () => locateCode(fragment));
+      list.append(button);
+    }
+    $('asset-list').append(list);
+    return;
   }
   if (!visible.length) {
     const empty = document.createElement('p');
@@ -629,12 +702,15 @@ function locateAsset(asset = assets.find(item => item.url === selectedAssetUrl))
   if (!asset) return;
   const selectedOccurrence = asset.url === selectedAssetUrl ? $('replace-scope').value.match(/^one:(\d+)$/)?.[1] : 0;
   const occurrence = asset.occurrences[Number(selectedOccurrence) || 0];
-  if (!occurrence) return;
+  if (occurrence) locateCode(occurrence);
+}
+
+function locateCode(occurrence, {focusEditor = true} = {}) {
   switchView('code');
   closeAssets();
   located = occurrence;
   updateLines();
-  editor.focus({preventScroll: true});
+  if (focusEditor) editor.focus({preventScroll: true});
   editor.setSelectionRange(occurrence.start, occurrence.end);
   measureCode();
   const first = codePaint.querySelector('.located')?.getClientRects()[0];
@@ -645,6 +721,75 @@ function locateAsset(asset = assets.find(item => item.url === selectedAssetUrl))
     syncCodeScroll();
   }
 }
+
+function updateFindCount() {
+  const total = findMatches.length;
+  $('code-find-count').value = total
+    ? `${Math.max(0, findIndex + 1)} / ${total}`
+    : $('code-query').value ? '无结果' : '—';
+  $('code-find-prev').disabled = !total;
+  $('code-find-next').disabled = !total;
+}
+
+function refreshCodeFind() {
+  findMatches = $('code-find').hidden ? [] : findCodeMatches(editor.value, $('code-query').value);
+  findIndex = -1;
+  updateFindCount();
+}
+
+function stepCodeFind(direction) {
+  if (!findMatches.length) return;
+  const total = findMatches.length;
+  findIndex = findIndex < 0 ? (direction < 0 ? total - 1 : 0) : (findIndex + direction + total) % total;
+  locateCode(findMatches[findIndex], {focusEditor: false});
+  updateFindCount();
+}
+
+function openCodeFind() {
+  switchView('code');
+  closeAssets();
+  $('code-find').hidden = false;
+  $('open-code-find').setAttribute('aria-expanded', 'true');
+  $('code-query').focus();
+  $('code-query').select();
+  if (findIndex < 0) {
+    refreshCodeFind();
+    stepCodeFind(1);
+  }
+}
+
+function closeCodeFind() {
+  if (findMatches.includes(located)) {
+    located = null;
+    updateLines();
+  }
+  $('code-find').hidden = true;
+  $('open-code-find').setAttribute('aria-expanded', 'false');
+  refreshCodeFind();
+  $('open-code-find').focus();
+}
+
+$('open-code-find').addEventListener('click', openCodeFind);
+$('close-code-find').addEventListener('click', closeCodeFind);
+$('code-query').addEventListener('input', () => {
+  if (findMatches.includes(located)) located = null;
+  refreshCodeFind();
+  if (findMatches.length) stepCodeFind(1);
+  else updateLines();
+});
+$('code-query').addEventListener('keydown', event => {
+  if (event.isComposing || event.key !== 'Enter') return;
+  event.preventDefault();
+  stepCodeFind(event.shiftKey ? -1 : 1);
+});
+$('code-find-prev').addEventListener('click', () => stepCodeFind(-1));
+$('code-find-next').addEventListener('click', () => stepCodeFind(1));
+$('code-find').addEventListener('keydown', event => {
+  if (!event.isComposing && event.key === 'Escape') {
+    event.preventDefault();
+    closeCodeFind();
+  }
+});
 
 function playAsset(url) {
   closeMedia();
@@ -671,7 +816,11 @@ $('close-media').addEventListener('click', closeMedia);
 
 document.querySelectorAll('[data-filter]').forEach(button => button.addEventListener('click', () => {
   assetFilter = button.dataset.filter;
-  document.querySelectorAll('[data-filter]').forEach(item => item.classList.toggle('active', item === button));
+  document.querySelectorAll('[data-filter]').forEach(item => {
+    item.classList.toggle('active', item === button);
+    item.setAttribute('aria-pressed', String(item === button));
+  });
+  document.querySelector('.assets-scroll').scrollTop = 0;
   renderAssetList();
 }));
 $('locate-asset').addEventListener('click', () => locateAsset());
@@ -949,6 +1098,10 @@ editor.addEventListener('keydown', event => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') { event.preventDefault(); moveHistory(1); }
 });
 document.addEventListener('keydown', event => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f' && !document.querySelector('dialog[open]')) {
+    event.preventDefault();
+    openCodeFind();
+  }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); saveDraft(); }
 });
 $('undo').addEventListener('click', () => moveHistory(-1));

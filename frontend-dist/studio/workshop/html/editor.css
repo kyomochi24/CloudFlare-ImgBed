@@ -101,6 +101,23 @@ body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 .code-url { color: #91dbf1; }
 .code-url.located { background: #78445f; color: #fff; }
 .code-token { color: #ffb8cb; }
+.code-location { background: #78445f; color: #fff; }
+.code-find { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 6px 10px; background: #fff6f8; border-bottom: 1px solid var(--line); }
+.code-find input { flex: 1 1 105px; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font: inherit; }
+.code-find output { min-width: 3.4em; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
+.code-find button { min-width: 32px; padding: 5px; }
+#open-code-find { margin-left: auto; }
+.asset-tabs { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.asset-tabs button { flex-wrap: wrap; gap: 2px 4px; white-space: normal; }
+.text-card { display: flex; justify-content: space-between; align-items: center; gap: 8px; text-align: left; white-space: normal; }
+.text-card > span { min-width: 0; overflow-wrap: anywhere; }
+.text-card strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-weight: 600; }
+.text-card small { display: block; margin-top: 3px; color: var(--muted); }
+.text-card > span:last-child { flex: none; color: var(--pink-dark); }
+@media (max-width: 980px) {
+  .code-find input { font-size: 16px; }
+  .code-find button { min-height: 38px; }
+}
 .code-area #line-numbers { font: var(--code-size, 14px)/1.62 ui-monospace, SFMono-Regular, Consolas, monospace; padding: 13px 4px; overflow: hidden; }
 .code-area { grid-template-columns: max(34px, calc(var(--code-size, 14px) * 2.8)) minmax(0, 1fr); }
 .preview-stage { scrollbar-gutter: stable; }

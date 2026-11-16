@@ -92,6 +92,40 @@ export function replaceAssetUrl(source, oldUrl, newUrl, options = {}) {
   return output;
 }
 
+export function scanTextFragments(source) {
+  const fragments = [];
+  // Scan original source so every result carries offsets into the textarea.
+  const markup = /<!--[\s\S]*?(?:-->|$)|<!\[CDATA\[[\s\S]*?(?:\]\]>|$)|<![^>]*>|<\/?([a-z][\w:-]*)(?=[\s/>])(?:[^"'>]|"[^"]*"|'[^']*')*>/gi;
+  let cursor = 0;
+  const append = end => {
+    const raw = source.slice(cursor, end);
+    const text = raw.trim();
+    if (!text) return;
+    const start = cursor + raw.length - raw.trimStart().length;
+    fragments.push({text, start, end: start + text.length});
+  };
+  for (let token; (token = markup.exec(source)); ) {
+    append(token.index);
+    const tag = token[1]?.toLowerCase();
+    if (!token[0].startsWith('</') && ['head', 'style', 'script', 'textarea', 'title', 'xmp'].includes(tag)) {
+      const closing = new RegExp('</' + tag + '\\s*>', 'gi');
+      closing.lastIndex = markup.lastIndex;
+      markup.lastIndex = closing.exec(source) ? closing.lastIndex : source.length;
+    }
+    cursor = markup.lastIndex;
+  }
+  append(source.length);
+  return fragments;
+}
+
+export function findCodeMatches(source, query) {
+  if (!query) return [];
+  const literal = query.replace(/[$.*+?^{}()|[\]\\]/g, '\\$&');
+  return Array.from(source.matchAll(new RegExp(literal, 'giu')), match => ({
+    start: match.index, end: match.index + match[0].length
+  }));
+}
+
 export function displayAssetName(url) {
   const value = String(url || '');
   if (value.startsWith('data:')) return '嵌入式素材';
