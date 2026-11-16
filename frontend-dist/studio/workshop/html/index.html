@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#fff5f2">
   <title>HTML 工作台 · 丘丘美化工坊</title>
   <script src="../display-settings.js?v=2"></script>
-  <link rel="stylesheet" href="editor.css?v=preview-mode1">
+  <link rel="stylesheet" href="editor.css?v=split1">
   <link rel="stylesheet" href="../display-settings.css?v=2">
-  <script type="module" src="editor.js?v=preview-mode1"></script>
+  <script type="module" src="editor.js?v=split1"></script>
 </head>
 <body>
   <header class="app-header">
@@ -32,6 +32,8 @@
   <div class="project-bar">
     <label>作品名称 <input id="project-name" maxlength="100" value="我的开场白"></label>
     <span id="save-state" role="status">正在打开草稿…</span>
+    <button id="toggle-assets" type="button" aria-controls="workbench-assets" aria-expanded="false">素材 · <span id="asset-button-count">0</span></button>
+    <button id="toggle-columns" type="button" aria-pressed="false">双栏</button>
     <button id="save-draft">保存草稿</button>
     <button id="export-project">备份工程</button>
     <button id="open-templates">从模板新建</button>
@@ -46,10 +48,20 @@
   <main class="workspace" data-view="preview">
     <section class="code-pane" aria-label="HTML 代码编辑器">
       <div class="panel-title"><span>⌘ HTML / CSS <small id="line-count">1 行</small></span><div><button id="undo" title="撤销">↶</button><button id="redo" title="重做">↷</button><button id="format-code" title="整理基础缩进">整理</button></div></div>
-      <div class="code-help"><span>输入后自动预览</span><span>点素材可定位代码</span></div>
-      <div class="code-area"><div id="line-numbers" aria-hidden="true">1</div><textarea id="html-editor" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off" aria-label="HTML 和 CSS 代码"></textarea></div>
+      <div class="code-help">
+        <label for="code-size">代码字号</label><select id="code-size"><option value="12">12 px</option><option value="14">14 px</option><option value="16">16 px</option><option value="18">18 px</option><option value="20">20 px</option><option value="22">22 px</option><option value="24">24 px</option></select>
+        <button id="code-wrap" type="button" aria-pressed="true">自动换行</button>
+      </div>
+      <div class="code-area" data-wrap="true">
+        <div id="line-numbers" aria-hidden="true"><div id="line-number-content"></div></div>
+        <div class="code-input">
+          <div id="code-mirror" aria-hidden="true"><div id="code-paint"></div></div>
+          <textarea id="html-editor" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="soft" aria-label="HTML 和 CSS 代码"></textarea>
+        </div>
+      </div>
       <div class="code-footer"><span id="render-state">准备预览中…</span><span>Tab 缩进 · Ctrl/⌘ Z 撤销 · Ctrl/⌘ S 保存</span></div>
     </section>
+    <div id="column-resizer" role="separator" tabindex="0" aria-label="调整代码栏宽度" aria-orientation="vertical" aria-valuemin="25" aria-valuemax="75" aria-valuenow="50"></div>
 
     <section class="preview-pane" aria-label="HTML 效果预览">
       <div class="panel-title"><div><span class="dot"></span> 实时预览 <small id="viewport-label">390 × 760</small></div><button id="focus-preview">⛶ 展开</button></div>
@@ -60,15 +72,15 @@
         </div>
         <label>尺寸<select id="device"><option value="390,760">手机气泡 · 390</option><option value="430,820">大屏手机 · 430</option><option value="720,760">PC 气泡 · 720</option><option value="1000,800">PC 宽屏 · 1000</option><option value="custom">自定义</option></select></label>
         <div class="dimensions" hidden><label>宽<input id="vp-width" type="number" min="260" max="1600" value="390"></label><span>×</span><label>高<input id="vp-height" type="number" min="320" max="1600" value="760"></label></div>
-        <label>查看缩放<select id="zoom"><option value="fit">适应窗口</option><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option></select></label>
+        <label>查看缩放<select id="zoom"><option value="width">适应宽度</option><option value="fit">适应窗口</option><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option></select></label>
         <label class="preview-name">预览名字<input id="placeholder-user" value="你" aria-label="用户占位符预览值"></label>
       </div>
       <div class="preview-stage" id="stage"><div id="frame-space"><div id="frame-wrap" class="device-frame"><iframe id="preview" title="隔离的 HTML 效果预览" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe></div></div></div>
       <div class="preview-footer"><span id="selected-element">可试用 CSS / HTML 交互 · 自定义脚本关闭</span><button id="show-element" disabled>调节</button><button id="refresh-preview">刷新</button><button id="clear-selection" disabled>取消选择</button></div>
     </section>
 
-    <aside class="assets-pane" aria-label="当前作品的素材和元素调节">
-      <div class="panel-title"><span>✿ 当前作品的素材</span><small id="asset-count">0 个</small></div>
+    <aside id="workbench-assets" class="assets-pane" aria-label="当前作品的素材和元素调节">
+      <div class="panel-title"><span>✿ 当前作品的素材 <small id="asset-count">0 个</small></span><button id="close-assets" type="button" aria-label="关闭素材面板">×</button></div>
       <div class="asset-tabs" role="tablist"><button data-filter="all" class="active">全部 <span id="count-all">0</span></button><button data-filter="image">图片 <span id="count-image">0</span></button><button data-filter="font">字体 <span id="count-font">0</span></button><button data-filter="music">音乐 <span id="count-music">0</span></button></div>
       <div class="assets-scroll">
         <div id="asset-list" class="asset-list"><p class="empty">当前代码里还没有识别到素材。</p></div>

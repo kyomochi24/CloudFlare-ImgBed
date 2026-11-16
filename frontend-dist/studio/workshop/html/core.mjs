@@ -113,7 +113,7 @@ export function normalizeViewport(viewport = {}) {
   return {
     width: clamp(viewport.width, 260, 1600, 390),
     height: clamp(viewport.height, 320, 1600, 760),
-    zoom: ['fit', '0.5', '0.75', '1'].includes(String(viewport.zoom)) ? String(viewport.zoom) : 'fit'
+    zoom: ['width', 'fit', '0.5', '0.75', '1'].includes(String(viewport.zoom)) ? String(viewport.zoom) : 'width'
   };
 }
 
@@ -123,7 +123,7 @@ export function freshProject() {
     version: 1,
     name: '我的开场白',
     html: DEFAULT_HTML,
-    viewport: {width: 390, height: 760, zoom: 'fit'},
+    viewport: {width: 390, height: 760, zoom: 'width'},
     placeholders: {user: '你', char: '浅浅丘'}
   };
 }

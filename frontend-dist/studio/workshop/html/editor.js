@@ -8,11 +8,15 @@ import {
   replaceAssetUrl,
   safeResourceUrl,
   scanAssets
-} from './core.mjs?v=20261113b';
+} from './core.mjs?v=split1';
 
 const $ = id => document.getElementById(id);
 const editor = $('html-editor');
 const frame = $('preview');
+const workspace = document.querySelector('.workspace');
+const codeArea = document.querySelector('.code-area');
+const codePaint = $('code-paint');
+const lineNumbers = $('line-number-content');
 const OMITTED_ELEMENTS = 'style,script,template,iframe,object,embed,form,meta,base,link,title';
 let project = freshProject();
 let channel = '';
@@ -35,6 +39,41 @@ let albumRequest = 0;
 let albumsLoaded = false;
 const fontPreviews = new Map();
 const compactLayout = matchMedia('(max-width: 980px)');
+const preferencesKey = 'qiuqiu-html-workbench-layout';
+let preferences = {};
+try { preferences = JSON.parse(localStorage.getItem(preferencesKey)) || {}; } catch { /* Private mode. */ }
+let pinned = preferences.pinned === true;
+let drawerOpen = false;
+let codeShare = Number(preferences.codeShare) || 50;
+let located = null;
+let paintedSource;
+let codeMeasureFrame;
+
+function rememberLayout(changes) {
+  preferences = {...preferences, ...changes};
+  try { localStorage.setItem(preferencesKey, JSON.stringify(preferences)); } catch { /* Keep this page's layout. */ }
+}
+
+function syncAssetsPane() {
+  const visible = pinned || drawerOpen;
+  workspace.dataset.assets = pinned ? 'pinned' : drawerOpen ? 'drawer' : 'closed';
+  $('toggle-assets').setAttribute('aria-expanded', String(visible));
+  $('toggle-columns').setAttribute('aria-pressed', String(pinned));
+  $('toggle-columns').textContent = pinned ? '三栏' : '双栏';
+  $('toggle-columns').title = pinned ? '切换到双栏' : '固定素材 · 切换到三栏';
+}
+
+function closeAssets() {
+  drawerOpen = false;
+  syncAssetsPane();
+}
+
+function setCodeShare(value) {
+  codeShare = Math.min(75, Math.max(25, value));
+  workspace.style.setProperty('--code-share', codeShare + 'fr');
+  workspace.style.setProperty('--preview-share', (100 - codeShare) + 'fr');
+  $('column-resizer').setAttribute('aria-valuenow', String(Math.round(codeShare)));
+}
 
 function toast(message) {
   $('toast').textContent = message;
@@ -128,18 +167,85 @@ function changed({immediate = false, skipPreview = false} = {}) {
   $('save-state').textContent = '有更改 · 即将保存';
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => saveDraft(true), 650);
-  updateLines();
   renderAssetList();
+  updateLines();
   clearTimeout(renderTimer);
   if (skipPreview) previewSource = editor.value;
   else renderTimer = setTimeout(renderPreview, immediate ? 0 : 260);
 }
 
 function updateLines() {
-  const count = editor.value.split('\n').length;
-  $('line-count').textContent = count + ' 行';
-  $('line-numbers').textContent = Array.from({length: count}, (_, index) => index + 1).join('\n');
-  $('line-numbers').scrollTop = editor.scrollTop;
+  const source = editor.value;
+  if (paintedSource !== source) located = null;
+  paintedSource = source;
+  const links = assets.flatMap(asset => asset.occurrences).sort((a, b) => a.start - b.start);
+  const codes = document.createDocumentFragment();
+  const numbers = document.createDocumentFragment();
+  let offset = 0;
+  let linkIndex = 0;
+  const lines = source.split('\n');
+  lines.forEach((text, index) => {
+    const code = document.createElement('div');
+    const number = document.createElement('div');
+    number.textContent = index + 1;
+    const limit = offset + text.length;
+    let position = offset;
+    function appendText(value) {
+      // Use text nodes even when the input contains real HTML.
+      for (const part of value.split(/(<\/?[a-zA-Z][\w:-]*|\{\{(?:user|char)\}\})/g)) {
+        if (!part) continue;
+        if (/^(?:<|\{\{)/.test(part)) {
+          const token = document.createElement('span');
+          token.className = 'code-token';
+          token.textContent = part;
+          code.append(token);
+        } else code.append(part);
+      }
+    }
+    while (links[linkIndex]?.start < limit) {
+      const link = links[linkIndex];
+      const start = Math.max(position, link.start);
+      const end = Math.min(limit, link.end);
+      if (end > start) {
+        appendText(source.slice(position, start));
+        const span = document.createElement('span');
+        span.className = 'code-url';
+        if (located?.start === link.start && located.end === link.end) span.classList.add('located');
+        span.textContent = source.slice(start, end);
+        code.append(span);
+        position = end;
+      }
+      if (link.end > limit) break;
+      linkIndex++;
+    }
+    appendText(source.slice(position, limit));
+    offset = limit + 1;
+    codes.append(code);
+    numbers.append(number);
+  });
+  codePaint.replaceChildren(codes);
+  lineNumbers.replaceChildren(numbers);
+  $('line-count').textContent = lines.length + ' 行';
+  scheduleCodeMeasure();
+}
+
+function syncCodeScroll() {
+  codePaint.style.transform = `translate(${-editor.scrollLeft}px, ${-editor.scrollTop}px)`;
+  lineNumbers.style.transform = `translateY(${-editor.scrollTop}px)`;
+}
+
+function measureCode() {
+  const width = editor.clientWidth;
+  if (!width) return;
+  codePaint.style.width = width + 'px';
+  const heights = Array.from(codePaint.children, line => line.getBoundingClientRect().height);
+  heights.forEach((height, index) => lineNumbers.children[index].style.height = height + 'px');
+  syncCodeScroll();
+}
+
+function scheduleCodeMeasure() {
+  cancelAnimationFrame(codeMeasureFrame);
+  codeMeasureFrame = requestAnimationFrame(measureCode);
 }
 
 function editableNodes(documentNode) {
@@ -419,6 +525,7 @@ function renderAssetList() {
   const counts = {image: 0, font: 0, music: 0};
   for (const asset of assets) counts[typeForFilter(asset)] = (counts[typeForFilter(asset)] || 0) + 1;
   $('asset-count').textContent = assets.length + ' 个';
+  $('asset-button-count').textContent = assets.length;
   $('count-all').textContent = assets.length;
   for (const type of ['image', 'font', 'music']) $(`count-${type}`).textContent = counts[type] || 0;
   const visible = assets.filter(asset => assetFilter === 'all' || typeForFilter(asset) === assetFilter);
@@ -524,10 +631,19 @@ function locateAsset(asset = assets.find(item => item.url === selectedAssetUrl))
   const occurrence = asset.occurrences[Number(selectedOccurrence) || 0];
   if (!occurrence) return;
   switchView('code');
-  editor.focus();
+  closeAssets();
+  located = occurrence;
+  updateLines();
+  editor.focus({preventScroll: true});
   editor.setSelectionRange(occurrence.start, occurrence.end);
-  const before = editor.value.slice(0, occurrence.start).split('\n').length - 1;
-  editor.scrollTop = Math.max(0, (before - 4) * parseFloat(getComputedStyle(editor).lineHeight));
+  measureCode();
+  const first = codePaint.querySelector('.located')?.getClientRects()[0];
+  if (first) {
+    const bounds = editor.getBoundingClientRect();
+    editor.scrollTop += first.top - bounds.top - editor.clientHeight * 0.28;
+    if (codeArea.dataset.wrap === 'false') editor.scrollLeft += first.left - bounds.left - 20;
+    syncCodeScroll();
+  }
 }
 
 function playAsset(url) {
@@ -675,8 +791,8 @@ function resizePreview() {
   const padding = getComputedStyle(stage);
   const availableWidth = Math.max(1, stage.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight));
   const availableHeight = Math.max(1, stage.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom));
-  const scale = zoom === 'fit'
-    ? Math.min(1, availableWidth / width, compactLayout.matches ? 1 : availableHeight / height)
+  const scale = zoom === 'fit' ? Math.min(1, availableWidth / width, availableHeight / height)
+    : zoom === 'width' ? Math.min(1, availableWidth / width)
     : Number(zoom);
   $('frame-wrap').style.width = width + 'px';
   $('frame-wrap').style.height = height + 'px';
@@ -716,7 +832,7 @@ new ResizeObserver(resizePreview).observe($('stage'));
 
 function switchView(view) {
   if (view !== 'preview' && document.body.classList.contains('preview-focus')) $('focus-preview').click();
-  document.querySelector('.workspace').dataset.view = view;
+  workspace.dataset.view = view;
   document.querySelectorAll('.mobile-tabs button').forEach(button => {
     const active = button.dataset.view === view;
     button.classList.toggle('active', active);
@@ -725,6 +841,88 @@ function switchView(view) {
   requestAnimationFrame(resizePreview);
 }
 document.querySelectorAll('.mobile-tabs button').forEach(button => button.addEventListener('click', () => switchView(button.dataset.view)));
+$('toggle-assets').addEventListener('click', () => {
+  if (pinned) {
+    $('workbench-assets').querySelector('.asset-tabs button').focus();
+    return;
+  }
+  drawerOpen = !drawerOpen;
+  syncAssetsPane();
+  if (drawerOpen) $('close-assets').focus({preventScroll: true});
+});
+$('toggle-columns').addEventListener('click', () => {
+  pinned = !pinned;
+  drawerOpen = false;
+  rememberLayout({pinned});
+  syncAssetsPane();
+});
+function dismissDrawer() {
+  closeAssets();
+  $('toggle-assets').focus();
+}
+$('close-assets').addEventListener('click', dismissDrawer);
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && drawerOpen && !compactLayout.matches && !document.querySelector('dialog[open]')) dismissDrawer();
+});
+compactLayout.addEventListener('change', closeAssets);
+
+const separator = $('column-resizer');
+separator.addEventListener('pointerdown', event => {
+  if (!event.isPrimary || event.button !== 0) return;
+  event.preventDefault();
+  const {left} = workspace.getBoundingClientRect();
+  const width = workspace.clientWidth - separator.offsetWidth - (pinned ? $('workbench-assets').offsetWidth : 0);
+  const pointerId = event.pointerId;
+  workspace.classList.add('is-resizing');
+  separator.setPointerCapture(pointerId);
+  separator.focus({preventScroll: true});
+  const move = next => {
+    if (next.pointerId === pointerId) setCodeShare(100 * (next.clientX - left - separator.offsetWidth / 2) / width);
+  };
+  separator.addEventListener('pointermove', move);
+  separator.addEventListener('lostpointercapture', () => {
+    separator.removeEventListener('pointermove', move);
+    workspace.classList.remove('is-resizing');
+    rememberLayout({codeShare});
+  }, {once: true});
+});
+separator.addEventListener('keydown', event => {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  const values = {ArrowLeft: codeShare - 3, ArrowRight: codeShare + 3, Home: 25, End: 75};
+  setCodeShare(values[event.key]);
+  rememberLayout({codeShare});
+});
+separator.addEventListener('dblclick', () => {
+  setCodeShare(50);
+  rememberLayout({codeShare});
+});
+
+function syncCodePreferences() {
+  const size = String(preferences.codeSize ?? (compactLayout.matches ? 16 : 14));
+  $('code-size').value = size;
+  if (!$('code-size').value) $('code-size').value = '14';
+  codeArea.style.setProperty('--code-size', $('code-size').value + 'px');
+  const wrap = preferences.wrap !== false;
+  codeArea.dataset.wrap = String(wrap);
+  editor.wrap = wrap ? 'soft' : 'off';
+  $('code-wrap').setAttribute('aria-pressed', String(wrap));
+  scheduleCodeMeasure();
+}
+$('code-size').addEventListener('change', () => {
+  rememberLayout({codeSize: Number($('code-size').value)});
+  syncCodePreferences();
+});
+$('code-wrap').addEventListener('click', () => {
+  rememberLayout({wrap: codeArea.dataset.wrap !== 'true'});
+  syncCodePreferences();
+});
+compactLayout.addEventListener('change', syncCodePreferences);
+new ResizeObserver(scheduleCodeMeasure).observe(editor);
+syncCodePreferences();
+syncAssetsPane();
+setCodeShare(codeShare);
+
 $('focus-preview').addEventListener('click', () => {
   const focused = document.body.classList.toggle('preview-focus');
   $('focus-preview').textContent = focused ? '↙ 返回编辑' : '⛶ 展开';
@@ -737,7 +935,7 @@ editor.addEventListener('input', () => {
   clearTimeout(historyTimer);
   historyTimer = setTimeout(recordHistory, 450);
 });
-editor.addEventListener('scroll', () => $('line-numbers').scrollTop = editor.scrollTop);
+editor.addEventListener('scroll', syncCodeScroll);
 editor.addEventListener('keydown', event => {
   if (event.key === 'Tab') {
     event.preventDefault();
@@ -772,6 +970,10 @@ $('clear-selection').addEventListener('click', clearSelection);
 $('show-element').addEventListener('click', () => {
   document.querySelector('.assets-scroll').scrollTop = 0;
   switchView('assets');
+  if (!compactLayout.matches && !pinned) {
+    drawerOpen = true;
+    syncAssetsPane();
+  }
   if (!compactLayout.matches) $('element-width').focus({preventScroll: true});
 });
 document.querySelectorAll('[data-preview-mode]').forEach(button => {
@@ -886,11 +1088,11 @@ function syncProject() {
   $('sample-char').value = project.placeholders.char;
   $('placeholder-user').value = project.placeholders.user;
   syncDevice();
-  updateLines();
   history = [];
   historyIndex = -1;
   recordHistory();
   renderAssetList();
+  updateLines();
   resizePreview();
   renderPreview();
 }
