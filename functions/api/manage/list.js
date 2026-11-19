@@ -1,5 +1,5 @@
 import {
-    readIndex, mergeOperationsToIndex, deleteAllOperations, rebuildIndex,
+    readIndex, mergeOperationsToIndex, cleanupProcessedOperations, rebuildIndex,
     getIndexInfo, getIndexStorageStats
 } from '../../utils/indexManager.js';
 import { getDatabase } from '../../utils/databaseAdapter.js';
@@ -8,7 +8,7 @@ import { createMetadataViewContext, serializeFileRecordForManagement } from '../
 // CORS 跨域响应头
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Max-Age': '86400',
 };
@@ -84,13 +84,16 @@ export async function onRequest(context) {
             });
         }
 
-        // 特殊操作：清除所有原子操作
+        // Cleanup is initiated separately from index reads and rebuilds.
         if (action === 'delete-operations') {
-            waitUntil(deleteAllOperations(context));
-
-            return new Response('All operations deleted asynchronously', {
-                headers: { "Content-Type": "text/plain", ...corsHeaders }
-            });
+            if (request.method !== 'POST') {
+                return new Response('Method not allowed', { status: 405, headers: { ...corsHeaders, Allow: 'POST' } });
+            }
+            const origin = request.headers.get('Origin');
+            if (origin && origin !== url.origin) {
+                return new Response('Invalid origin', { status: 403, headers: corsHeaders });
+            }
+            return Response.json(await cleanupProcessedOperations(context), { headers: corsHeaders });
         }
 
         // 特殊操作：获取索引存储信息

@@ -79,8 +79,10 @@ async function authentication(context) {
     });
   }
 
-  const pathname = new URL(context.request.url).pathname;
-  const requiredPermission = extractRequiredPermission(pathname);
+  const url = new URL(context.request.url);
+  const permission = extractRequiredPermission(url.pathname);
+  const cleanup = permission === 'list' && url.searchParams.get('action') === 'delete-operations';
+  const requiredPermission = cleanup ? 'manage' : permission;
 
   const result = await authenticate({
     env: context.env,
