@@ -117,17 +117,86 @@
     announcementPreview();
   }
   async function load() {
-    try { const [data, news] = await Promise.all([api('overview'), api('announcement')]); $('needs-admin').classList.add('hidden'); $('admin-content').classList.remove('hidden'); render(data); renderAnnouncement(news.announcement); }
+    try { const [data, news] = await Promise.all([api('overview?applicationsOnly=1'), api('announcement')]); $('needs-admin').classList.add('hidden'); $('admin-content').classList.remove('hidden'); renderApplications(data); renderAnnouncement(news.announcement); void loadUsers(); }
     catch (e) { $('admin-content').classList.add('hidden'); $('needs-admin').classList.remove('hidden'); if (!e.message.includes('请先登录')) notice(e.message, true); }
   }
-  function render(data) {
+  function renderApplications(data) {
     const pending = data.applications.filter(a => a.status === 'pending');
     $('application-list').innerHTML = pending.length ? pending.map(a => `<div class="admin-row"><div><strong>${escapeHtml(a.work_title)}</strong><span class="tag">${escapeHtml(a.discord_name || a.username || '用户')}</span><p>Discord ID：${escapeHtml(a.discord_id)} · 提交于 ${escapeHtml(a.created_at)}</p>${workReference(a.work_url)}${a.note ? `<p>留言：${escapeHtml(a.note)}</p>` : ''}</div><div class="admin-actions"><button class="approve" data-review="${escapeHtml(a.id)}" data-decision="approved">通过 · 皮卡丘</button><button class="reject" data-review="${escapeHtml(a.id)}" data-decision="rejected">不通过</button></div></div>`).join('') : '<div class="admin-empty">现在没有待审核的申请 ✿</div>';
-    $('user-list').innerHTML = data.users.length ? data.users.map(u => { const tier = u.is_super ? 'super' : u.tier; return `<div class="admin-row"><div><strong>${escapeHtml(u.discord_name || u.username || u.id)}</strong><span class="tag">${tier === 'super' ? '超级无敌美化大师丘' : tier === 'pikachu' ? '皮卡丘' : tier === 'dondon' ? '咚咚鼠' : '皮丘'}</span>${u.disabled ? '<span class="tag">已停用</span>' : ''}<p>${u.account_type === 'discord' ? 'Discord' : '专用账号'} · ${escapeHtml(u.discord_id || u.username || '')} · 已存 ${fmt(u.stored_bytes)} · 本月上传 ${fmt(u.month_uploaded_bytes)}</p></div><div class="admin-actions"><label class="tier-picker">站内身份<select data-tier-user="${escapeHtml(u.id)}"><option value="pichu" ${tier === 'pichu' ? 'selected' : ''}>皮丘</option><option value="dondon" ${tier === 'dondon' ? 'selected' : ''}>咚咚鼠 · 500 MB 永久</option><option value="pikachu" ${tier === 'pikachu' ? 'selected' : ''}>皮卡丘</option><option value="super" ${tier === 'super' ? 'selected' : ''}>超级无敌美化大师丘</option></select></label><button data-user="${escapeHtml(u.id)}" data-disabled="${u.disabled ? 'false' : 'true'}">${u.disabled ? '启用' : '停用'}</button></div></div>`; }).join('') : '<div class="admin-empty">还没有用户</div>';
+  }
+
+  let userOffset = 0;
+  let userPageSize = 30;
+  let userSearchRevision = 0;
+  let userSearchTimer;
+
+  function renderUsers(users, query) {
+    $('user-list').innerHTML = users.length ? users.map(u => { const tier = u.is_super ? 'super' : u.tier; return `<div class="admin-row"><div><strong>${escapeHtml(u.discord_name || u.username || u.id)}</strong><span class="tag">${tier === 'super' ? '超级无敌美化大师丘' : tier === 'pikachu' ? '皮卡丘' : tier === 'dondon' ? '咚咚鼠' : '皮丘'}</span>${u.disabled ? '<span class="tag">已停用</span>' : ''}<p>${u.account_type === 'discord' ? 'Discord' : '专用账号'} · ${escapeHtml(u.discord_id || u.username || '')} · 已存 ${fmt(u.stored_bytes)} · 本月上传 ${fmt(u.month_uploaded_bytes)}</p></div><div class="admin-actions"><label class="tier-picker">站内身份<select data-tier-user="${escapeHtml(u.id)}"><option value="pichu" ${tier === 'pichu' ? 'selected' : ''}>皮丘</option><option value="dondon" ${tier === 'dondon' ? 'selected' : ''}>咚咚鼠 · 500 MB 永久</option><option value="pikachu" ${tier === 'pikachu' ? 'selected' : ''}>皮卡丘</option><option value="super" ${tier === 'super' ? 'selected' : ''}>超级无敌美化大师丘</option></select></label><button data-user="${escapeHtml(u.id)}" data-disabled="${u.disabled ? 'false' : 'true'}">${u.disabled ? '启用' : '停用'}</button></div></div>`; }).join('') : `<div class="admin-empty">${query ? "没找到符合条件的用户" : "还没有用户"}</div>`;
+  }
+
+  async function loadUsers() {
+    const revision = ++userSearchRevision;
+    const query = $('user-query').value.trim();
+    const status = $('user-search-status');
+    const list = $('user-list');
+    const params = new URLSearchParams({q: query, offset: String(userOffset)});
+    status.textContent = query ? '正在搜索…' : '正在读取用户…';
+    list.setAttribute('aria-busy', 'true');
+    $('users-prev').disabled = true;
+    $('users-next').disabled = true;
+    try {
+      const result = await api(`users?${params}`);
+      if (revision !== userSearchRevision) return;
+      userPageSize = result.pageSize;
+      renderUsers(result.users, query);
+      status.textContent = result.users.length
+        ? `${query ? '匹配用户' : '用户'} ${userOffset + 1}–${userOffset + result.users.length}${result.hasMore ? ' · 还有更多' : ''}`
+        : '';
+      $('user-page').textContent = `第 ${Math.floor(userOffset / userPageSize) + 1} 页`;
+      $('user-pagination').hidden = userOffset === 0 && !result.hasMore;
+      $('users-prev').disabled = userOffset === 0;
+      $('users-next').disabled = !result.hasMore;
+    } catch (error) {
+      if (revision !== userSearchRevision) return;
+      list.replaceChildren();
+      $('user-pagination').hidden = true;
+      status.textContent = error.message;
+    } finally {
+      if (revision === userSearchRevision) list.removeAttribute('aria-busy');
+    }
+  }
+
+  function updateUserQuery(event) {
+    $('clear-user-query').disabled = !$('user-query').value;
+    clearTimeout(userSearchTimer);
+    userSearchRevision++;
+    userOffset = 0;
+    $('user-list').replaceChildren();
+    $('user-pagination').hidden = true;
+    $('user-search-status').textContent = '正在搜索…';
+    if (!event?.isComposing) userSearchTimer = setTimeout(loadUsers, 220);
+  }
+
+  $('user-query').addEventListener('input', updateUserQuery);
+  $('user-query').addEventListener('compositionend', updateUserQuery);
+  $('clear-user-query').addEventListener('click', () => {
+    clearTimeout(userSearchTimer);
+    $('user-query').value = '';
+    $('clear-user-query').disabled = true;
+    userOffset = 0;
+    $('user-query').focus();
+    void loadUsers();
+  });
+  for (const [id, direction] of [['users-prev', -1], ['users-next', 1]]) {
+    $(id).addEventListener('click', () => {
+      userOffset = Math.max(0, userOffset + direction * userPageSize);
+      $('admin-members').scrollIntoView({block: 'start'});
+      void loadUsers();
+    });
   }
   $('application-list').addEventListener('click', async event => { const b = event.target.closest('[data-review]'); if (!b) return; if (!confirm(`确定${b.dataset.decision === 'approved' ? '通过' : '驳回'}这份申请吗？`)) return; b.disabled = true; try { await api(`applications/${encodeURIComponent(b.dataset.review)}`, 'POST', { decision: b.dataset.decision }); notice('审核已保存'); await load(); } catch (e) { notice(e.message, true); b.disabled = false; } });
-  $('user-list').addEventListener('click', async event => { const b = event.target.closest('[data-user]'); if (!b) return; const data = b.dataset.tier ? { tier: b.dataset.tier } : { disabled: b.dataset.disabled === 'true' }; if (!confirm('确定修改这个用户吗？')) return; b.disabled = true; try { await api(`users/${encodeURIComponent(b.dataset.user)}`, 'PATCH', data); notice('用户权限已更新'); await load(); } catch (e) { notice(e.message, true); b.disabled = false; } });
-  $('user-list').addEventListener('change', async event => { const select = event.target.closest('[data-tier-user]'); if (!select) return; const tier = select.value; if (!confirm(`确定把这个用户设为「${select.selectedOptions[0].textContent}」吗？`)) { await load(); return; } select.disabled = true; try { await api(`users/${encodeURIComponent(select.dataset.tierUser)}`, 'PATCH', { tier }); notice('用户身份已更新'); await load(); } catch (e) { notice(e.message, true); await load(); } });
+  $('user-list').addEventListener('click', async event => { const b = event.target.closest('[data-user]'); if (!b) return; const data = b.dataset.tier ? { tier: b.dataset.tier } : { disabled: b.dataset.disabled === 'true' }; if (!confirm('确定修改这个用户吗？')) return; b.disabled = true; try { await api(`users/${encodeURIComponent(b.dataset.user)}`, 'PATCH', data); notice('用户权限已更新'); await loadUsers(); } catch (e) { notice(e.message, true); b.disabled = false; } });
+  $('user-list').addEventListener('change', async event => { const select = event.target.closest('[data-tier-user]'); if (!select) return; const tier = select.value; if (!confirm(`确定把这个用户设为「${select.selectedOptions[0].textContent}」吗？`)) { await loadUsers(); return; } select.disabled = true; try { await api(`users/${encodeURIComponent(select.dataset.tierUser)}`, 'PATCH', { tier }); notice('用户身份已更新'); await loadUsers(); } catch (e) { notice(e.message, true); await loadUsers(); } });
   $('create-user').addEventListener('submit', async event => { event.preventDefault(); const form = new FormData(event.currentTarget); const button = event.currentTarget.querySelector('button'); button.disabled = true; try { const user = await api('users', 'POST', Object.fromEntries(form)); notice(`账号 ${user.username} 已创建。请用安全方式把你设置的密码交给用户。`); event.currentTarget.reset(); await load(); } catch (e) { notice(e.message, true); } finally { button.disabled = false; } });
   $('announcement-form').addEventListener('input', announcementPreview);
   $('announcement-file-input').addEventListener('change', async event => {
@@ -163,6 +232,30 @@
       notice('公告已保存，访客刷新页面即可看到');
     } catch (error) { $('announcement-feedback').textContent = error.message; notice(error.message, true); }
     finally { button.disabled = false; }
+  });
+  $('cleanup-index-records').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    const status = $('cleanup-index-status');
+    button.disabled = true;
+    status.textContent = '正在清理索引记录…';
+    try {
+      const result = await api('index-cleanup', 'POST');
+      const messages = {
+        'no-watermark': '暂无已合并的记录。打开原图床管理后台的文件列表可更新索引。',
+        'no-processed-records': '没有可清理的索引记录。',
+        'cleanup-paused': '今日清理已暂停，下一个额度日可再试。',
+        'daily-budget-used': '今日清理额度已用完。',
+        'cleanup-busy': '另一批清理正在运行，稍后可再试。',
+        'budget-storage-unavailable': '清理暂不可用，请检查 D1 额度和迁移。'
+      };
+      status.textContent = result.stopped
+        ? `已清理 ${result.deleted} 条，清理已停止。`
+        : messages[result.reason] || `已清理 ${result.deleted} 条索引记录。`;
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
   });
   load();
 })();
