@@ -1,5 +1,5 @@
 import { getDatabase } from '../../utils/databaseAdapter.js';
-import { addFileToIndex, removeFileFromIndex } from '../../utils/indexManager.js';
+import { addFileToIndex, cleanupProcessedOperations, removeFileFromIndex } from '../../utils/indexManager.js';
 import { hashPassword, verifyPassword } from '../../utils/auth/passwordHash.js';
 import { validateSession } from '../../utils/auth/sessionManager.js';
 import { reserveStudioQuota, releaseStudioQuota } from '../../utils/studioQuota.js';
@@ -46,6 +46,18 @@ const effectiveTier = user => user.is_super ? 'super' : user.tier === 'pikachu' 
 const safeUser = u => ({ id: u.id, username: u.username, discordId: u.discord_id, discordName: u.discord_name, accountType: u.account_type, tier: effectiveTier(u), storedBytes: u.stored_bytes, monthUploadedBytes: u.month_key === monthKey() ? u.month_uploaded_bytes : 0, monthKey: monthKey(), baseLimit: u.is_dondon ? DONDON_LIMIT : BASE_LIMIT, creatorMonthLimit: CREATOR_MONTH_LIMIT });
 const userFlags = 'EXISTS(SELECT 1 FROM studio_super_users su WHERE su.user_id=u.id) AS is_super, EXISTS(SELECT 1 FROM studio_dondon_users du WHERE du.user_id=u.id) AS is_dondon';
 const userSelect = `SELECT u.*, ${userFlags} FROM studio_users u`;
+const adminUserSelect = `SELECT u.id,u.username,u.discord_id,u.discord_name,u.account_type,u.tier,u.disabled,u.stored_bytes,u.month_key,u.month_uploaded_bytes,u.created_at,${userFlags} FROM studio_users u`;
+const adminUserOrder = 'ORDER BY u.created_at DESC, u.id DESC';
+const adminUserPageSize = 30;
+
+function adminUserRows(rows) {
+  const month = monthKey();
+  return (rows.results || []).map(user => ({
+    ...user, tier: effectiveTier(user),
+    month_uploaded_bytes: user.month_key === month ? user.month_uploaded_bytes : 0,
+    month_key: month
+  }));
+}
 
 function announcementData(value = {}) {
   const contentRuns = Array.isArray(value.contentRuns) ? value.contentRuns.slice(0, 200).map(run => ({
@@ -463,7 +475,15 @@ async function handleUser(context, db, user, route, method) {
     return json({ ok: true }, 200, { 'Set-Cookie': cookie('', 0) });
   }
   if (route === 'albums' && method === 'GET') {
-    const rows = await db.prepare('SELECT a.*,count(f.id) file_count FROM studio_albums a LEFT JOIN studio_files f ON f.album_id=a.id WHERE a.user_id=? GROUP BY a.id ORDER BY a.created_at').bind(user.id).all();
+    const rows = await db.prepare(`
+      SELECT a.*, (
+        SELECT count(*) FROM studio_files f
+        WHERE f.user_id = a.user_id AND f.album_id = a.id
+      ) AS file_count
+      FROM studio_albums a
+      WHERE a.user_id = ?
+      ORDER BY a.created_at
+    `).bind(user.id).all();
     return json({ albums: rows.results || [] });
   }
   if (route === 'albums' && method === 'POST') {
@@ -586,6 +606,9 @@ async function handleAdmin(context, db, route, method) {
   const { env, request } = context;
   const admin = await validateSession(env, request, 'admin');
   if (!admin.valid) return fail('请先登录原图床管理后台', 401);
+  if (route === 'admin/index-cleanup' && method === 'POST') {
+    return json(await cleanupProcessedOperations(context));
+  }
   if (route === 'admin/announcement' && method === 'GET') return json({ announcement: await readAnnouncement(env) });
   if (route === 'admin/announcement' && method === 'PATCH') {
     const data = await bodyJson(request);
@@ -625,11 +648,27 @@ async function handleAdmin(context, db, route, method) {
     return json({ urls: saved.map(id => `${new URL(request.url).origin}/file/${id}`) }, 201);
   }
   if (route === 'admin/overview' && method === 'GET') {
+    const applicationsOnly = new URL(request.url).searchParams.get('applicationsOnly') === '1';
     const [users, applications] = await Promise.all([
-      db.prepare(`SELECT u.id,u.username,u.discord_id,u.discord_name,u.account_type,u.tier,u.disabled,u.stored_bytes,u.month_key,u.month_uploaded_bytes,u.created_at,${userFlags} FROM studio_users u ORDER BY u.created_at DESC LIMIT 500`).all(),
+      applicationsOnly ? null : db.prepare(`${adminUserSelect} ${adminUserOrder} LIMIT 500`).all(),
       db.prepare('SELECT a.*,u.username,u.discord_name FROM studio_applications a JOIN studio_users u ON u.id=a.user_id ORDER BY a.created_at DESC LIMIT 200').all()
     ]);
-    return json({ users: (users.results || []).map(user => ({ ...user, tier: effectiveTier(user), month_uploaded_bytes: user.month_key === monthKey() ? user.month_uploaded_bytes : 0, month_key: monthKey() })), applications: applications.results || [] });
+    return json({ ...(users && { users: adminUserRows(users) }), applications: applications.results || [] });
+  }
+  if (route === 'admin/users' && method === 'GET') {
+    const params = new URL(request.url).searchParams;
+    const query = plain(params.get('q')).slice(0, 100);
+    const needle = query.match(/^<@!?(\d+)>$/)?.[1] || query;
+    const offset = Number(params.get('offset') || 0);
+    if (!Number.isSafeInteger(offset) || offset < 0) return fail('分页参数无效');
+    const filter = needle ? `WHERE (
+      instr(lower(u.username), lower(?1)) > 0 OR instr(lower(u.discord_name), lower(?1)) > 0
+      OR instr(u.discord_id, ?1) > 0 OR instr(lower(u.id), lower(?1)) > 0
+    )` : '';
+    const statement = db.prepare(`${adminUserSelect} ${filter} ${adminUserOrder} LIMIT ? OFFSET ?`);
+    const args = needle ? [needle, adminUserPageSize + 1, offset] : [adminUserPageSize + 1, offset];
+    const users = adminUserRows(await statement.bind(...args).all());
+    return json({ users: users.slice(0, adminUserPageSize), hasMore: users.length > adminUserPageSize, pageSize: adminUserPageSize });
   }
   if (route === 'admin/users' && method === 'POST') {
     const data = await bodyJson(request);
