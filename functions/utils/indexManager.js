@@ -46,7 +46,12 @@ const OPERATION_KEY_PREFIX = 'manage@index@operation_';
 const INDEX_CHUNK_SIZE_D1 = 500; // D1 数据库分块大小
 const INDEX_CHUNK_SIZE_KV = 5000; // KV 存储分块大小
 const KV_LIST_LIMIT = 1000; // 数据库列出批量大小
-const BATCH_SIZE = 10; // 批量处理大小
+const CLEANUP_BATCH = 40;
+const DAILY_KV_CLEANUP_LIMIT = 200;
+
+function usesKV(env) {
+    return typeof env.img_url?.get === 'function';
+}
 
 /**
  * 根据数据库类型获取索引分块大小
@@ -297,13 +302,10 @@ export async function batchMoveFilesInIndex(context, moveOperations) {
 /**
  * 合并所有挂起的操作到索引中
  * @param {Object} context - 上下文对象
- * @param {Object} options - 选项
- * @param {boolean} options.cleanupAfterMerge - 合并后是否清理操作记录，默认为 true
  * @returns {Object} 合并结果
  */
-export async function mergeOperationsToIndex(context, options = {}) {
-    const { request } = context;
-    const { cleanupAfterMerge = true } = options;
+export async function mergeOperationsToIndex(context, { cleanupAfterMerge = true } = {}) {
+    const { request, env } = context;
     
     try {
         console.log('Starting operations merge...');
@@ -336,7 +338,7 @@ export async function mergeOperationsToIndex(context, options = {}) {
         console.log(`Found ${operations.length} pending operations to merge. Is all operations: ${isALLOperations}, if there are remaining operations they will be processed in the next merge.`);
 
         // 按时间戳排序操作，确保按正确顺序应用
-        operations.sort((a, b) => a.timestamp - b.timestamp);
+        operations.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
         // 创建索引的副本进行操作
         const workingIndex = currentIndex;
@@ -384,8 +386,7 @@ export async function mergeOperationsToIndex(context, options = {}) {
                         break;
                         
                     default:
-                        console.warn(`Unknown operation type: ${operation.type}`);
-                        continue;
+                        throw new Error(`Unknown operation type: ${operation.type}`);
                 }
                 
                 operationsProcessed++;
@@ -398,6 +399,7 @@ export async function mergeOperationsToIndex(context, options = {}) {
                 
             } catch (error) {
                 console.error(`Error applying operation ${operation.id}:`, error);
+                return { success: false, error: error.message };
             }
         }
 
@@ -424,9 +426,8 @@ export async function mergeOperationsToIndex(context, options = {}) {
             console.log(`Index updated: ${addedCount} added, ${updatedCount} updated, ${removedCount} removed, ${movedCount} moved`);
         }
 
-        // 清理已处理的操作记录
-        if (cleanupAfterMerge && processedOperationIds.length > 0) {
-            await cleanupOperations(context, processedOperationIds);
+        if (!usesKV(env) && cleanupAfterMerge && processedOperationIds.length > 0) {
+            await deleteProcessedKeys(getDatabase(env), processedOperationIds.map(id => OPERATION_KEY_PREFIX + id));
         }
 
         // 如果未处理完所有操作，调用 merge-operations API 递归处理
@@ -772,13 +773,14 @@ export async function rebuildIndex(context, progressCallback = null) {
     try {
         console.log('Starting index rebuild...');
         
+        const previousMeta = JSON.parse(await db.get(INDEX_META_KEY) || '{}');
         let cursor = null;
         let processedCount = 0;
         const newIndex = {
             files: [],
             lastUpdated: Date.now(),
             totalCount: 0,
-            lastOperationId: null
+            lastOperationId: previousMeta.lastOperationId ?? null
         };
 
         // 分批读取所有文件
@@ -837,10 +839,7 @@ export async function rebuildIndex(context, progressCallback = null) {
             };
         }
 
-        // 清除旧的操作记录和多余索引
-        waitUntil(deleteAllOperations(context));
-        waitUntil(clearChunkedIndex(context, true));
-
+        if (!usesKV(env)) waitUntil(clearChunkedIndex(context, true));
 
         console.log(`Index rebuild completed. Processed ${processedCount} files, indexed ${newIndex.totalCount} files.`);
         return {
@@ -1355,25 +1354,24 @@ async function getAllPendingOperations(context, lastOperationId = null) {
                     break;
                 }
 
-                try {
-                    const operationData = await db.get(item.name);
-                    if (operationData) {
-                        const operation = JSON.parse(operationData);
-                        operation.id = item.name.substring(OPERATION_KEY_PREFIX.length);
-                        operations.push(operation);
-                        operationCount++;
-                    }
-                } catch (error) {
-                    isALL = false;
-                    console.warn(`Failed to parse operation ${item.name}:`, error);
-                }
+                const operationData = await db.get(item.name);
+                if (!operationData) throw new Error(`Index operation is unavailable: ${item.name}`);
+                const operation = JSON.parse(operationData);
+                operation.id = item.name.substring(OPERATION_KEY_PREFIX.length);
+                operations.push(operation);
+                operationCount++;
             }
             
             cursor = response.cursor;
-            if (!cursor || operationCount >= MAX_OPERATION_COUNT) break;
+            if (!cursor) break;
+            if (operationCount >= MAX_OPERATION_COUNT) {
+                isALL = false;
+                break;
+            }
         }
     } catch (error) {
         console.error('Error getting pending operations:', error);
+        throw error;
     }
     
     return {
@@ -1543,125 +1541,92 @@ function applyBatchMoveOperation(index, data) {
     return movedCount;
 }
 
-/**
- * 并发清理指定的原子操作记录
- * @param {Object} context - 上下文对象
- * @param {Array} operationIds - 要清理的操作ID数组
- * @param {number} concurrency - 并发数量，默认为10
- */
-async function cleanupOperations(context, operationIds, concurrency = 10) {
-    const { env } = context;
-    const db = getDatabase(env);
-
-    try {
-        console.log(`Cleaning up ${operationIds.length} processed operations with concurrency ${concurrency}...`);
-        
-        let deletedCount = 0;
-        let errorCount = 0;
-        
-        // 创建删除任务数组
-        const deleteTasks = operationIds.map(operationId => {
-            const operationKey = OPERATION_KEY_PREFIX + operationId;
-            return async () => {
-                try {
-                    await db.delete(operationKey);
-                    deletedCount++;
-                } catch (error) {
-                    console.error(`Error deleting operation ${operationId}:`, error);
-                    errorCount++;
-                }
-            };
-        });
-        
-        // 使用并发控制执行删除操作
-        await promiseLimit(deleteTasks, concurrency);
-
-        console.log(`Successfully cleaned up ${deletedCount} operations, ${errorCount} operations failed.`);
-        return {
-            success: true,
-            deletedCount: deletedCount,
-            errorCount: errorCount,
-        };
-
-    } catch (error) {
-        console.error('Error cleaning up operations:', error);
+async function deleteProcessedKeys(db, keys, deadline = Infinity) {
+    let deleted = 0;
+    for (const key of keys) {
+        if (Date.now() >= deadline) return { deleted, stopped: true };
+        try {
+            await db.delete(key);
+            deleted++;
+        } catch (error) {
+            console.warn('Index cleanup stopped after delete error:', error);
+            return { deleted, stopped: true };
+        }
     }
+    return { deleted, stopped: false };
 }
 
-/**
- * 删除所有原子操作记录
- * @param {Object} context - 上下文对象，包含 env 和其他信息
- * @returns {Object} 删除结果 { success, deletedCount, errors?, totalFound? }
- */
-export async function deleteAllOperations(context) {
-    const { request, env } = context;
+async function reserveCleanupBudget(db, day, count, now, leaseUntil, previouslyAttempted) {
+    // Reserve attempts before issuing deletes so concurrent requests cannot overspend.
+    const result = await db.prepare(`
+        INSERT INTO kv_index_cleanup_budget (day, attempted, lease_until)
+        VALUES (?, ?, ?)
+        ON CONFLICT(day) DO UPDATE SET
+            attempted = attempted + excluded.attempted, lease_until = excluded.lease_until
+        WHERE paused = 0 AND attempted = ?
+          AND attempted + excluded.attempted <= ? AND lease_until <= ?
+    `).bind(day, count, leaseUntil, previouslyAttempted, DAILY_KV_CLEANUP_LIMIT, now).run();
+    return result.meta?.changes === 1;
+}
+
+// Keep the existing administrative action, but only remove records covered by the saved index.
+export async function cleanupProcessedOperations(context) {
+    const { env } = context;
     const db = getDatabase(env);
-    
-    try {
-        console.log('Starting to delete all atomic operations...');
-        
-        // 获取所有原子操作
-        const allOperationIds = [];
-        let cursor = null;
-        let totalFound = 0;
-        
-        // 首先收集所有操作键
-        while (true) {
-            const response = await db.list({
-                prefix: OPERATION_KEY_PREFIX,
-                limit: KV_LIST_LIMIT,
-                cursor: cursor
-            });
-            
-            for (const item of response.keys) {
-                allOperationIds.push(item.name.substring(OPERATION_KEY_PREFIX.length));
-                totalFound++;
-            }
-            
-            cursor = response.cursor;
-            if (!cursor) break;
-        }
-        
-        if (totalFound === 0) {
-            console.log('No atomic operations found to delete');
-            return {
-                success: true,
-                deletedCount: 0,
-                totalFound: 0,
-                message: 'No operations to delete'
-            };
-        }
-        
-        console.log(`Found ${totalFound} atomic operations to delete`);
-
-        // 限制单次删除的数量
-        const MAX_DELETE_BATCH = 40;
-        const toDeleteOperationIds = allOperationIds.slice(0, MAX_DELETE_BATCH);
-   
-        // 批量删除原子操作
-        const cleanupResult = await cleanupOperations(context, toDeleteOperationIds);
-
-        // 剩余未删除的操作，调用 delete-operations API 进行递归删除
-        if (allOperationIds.length > MAX_DELETE_BATCH || cleanupResult.errorCount > 0) {
-            console.warn(`Too many operations (${allOperationIds.length}), only deleting first ${cleanupResult.deletedCount}. The remaining operations will be deleted in subsequent calls.`);
-            // 复制请求头，用于鉴权
-            const headers = new Headers(request.headers);
-
-            const originUrl = new URL(request.url);
-            const deleteUrl = `${originUrl.protocol}//${originUrl.host}/api/manage/list?action=delete-operations`
-            
-            await fetch(deleteUrl, {
-                method: 'GET',
-                headers: headers
-            });
-
-        } else {
-            console.log(`Delete all operations completed`);
-        }
-
-    } catch (error) {
-        console.error('Error deleting all operations:', error);
+    const metadata = JSON.parse(await db.get(INDEX_META_KEY) || '{}');
+    if (typeof metadata.lastOperationId !== 'string' || !metadata.lastOperationId) {
+        return { deleted: 0, reason: 'no-watermark' };
     }
+    const boundary = OPERATION_KEY_PREFIX + metadata.lastOperationId;
+    const isKV = usesKV(env);
+    const budgetDb = env.img_d1;
+
+    const now = Date.now();
+    const day = new Date(now).toISOString().slice(0, 10);
+    let attempted = 0;
+    if (isKV) {
+        if (!budgetDb?.prepare) return { deleted: 0, reason: 'budget-storage-unavailable' };
+        try {
+            const budget = await budgetDb.prepare(
+                'SELECT attempted, paused, lease_until FROM kv_index_cleanup_budget WHERE day = ?'
+            ).bind(day).first();
+            if (budget?.paused) return { deleted: 0, reason: 'cleanup-paused' };
+            if (budget?.lease_until > now) return { deleted: 0, reason: 'cleanup-busy' };
+            attempted = budget?.attempted ?? 0;
+            if (attempted >= DAILY_KV_CLEANUP_LIMIT) return { deleted: 0, reason: 'daily-budget-used' };
+        } catch (error) {
+            console.warn('KV cleanup budget unavailable:', error);
+            return { deleted: 0, reason: 'budget-storage-unavailable' };
+        }
+    }
+    const limit = isKV ? Math.min(CLEANUP_BATCH, DAILY_KV_CLEANUP_LIMIT - attempted) : CLEANUP_BATCH;
+    const { keys } = await db.list({ prefix: OPERATION_KEY_PREFIX, limit });
+    const selected = keys.map(item => item.name).filter(key =>
+        key.startsWith(OPERATION_KEY_PREFIX) && key <= boundary).slice(0, limit);
+    if (!selected.length) return { deleted: 0, reason: 'no-processed-records' };
+    if (!isKV) return deleteProcessedKeys(db, selected);
+
+    const leaseUntil = Math.min(now + 120_000, Date.parse(day) + 86_400_000);
+    try {
+        if (!await reserveCleanupBudget(budgetDb, day, selected.length, now, leaseUntil, attempted)) {
+            return { deleted: 0, reason: 'cleanup-busy' };
+        }
+    } catch (error) {
+        console.warn('KV cleanup budget reservation failed:', error);
+        return { deleted: 0, reason: 'budget-storage-unavailable' };
+    }
+
+    const result = await deleteProcessedKeys(db, selected, leaseUntil);
+    try {
+        await budgetDb.prepare(`
+            UPDATE kv_index_cleanup_budget SET paused = ?, lease_until = 0
+            WHERE day = ? AND lease_until = ? AND attempted = ?
+        `).bind(result.stopped ? 1 : 0, day, leaseUntil, attempted + selected.length).run();
+    } catch (error) {
+        console.warn('KV cleanup budget finalization failed:', error);
+    }
+    console.info('KV index cleanup', { day, attempted: selected.length, ...result });
+    return result;
 }
 
 /* ============= 工具函数 ============= */
@@ -1844,39 +1809,6 @@ function insertFileInOrder(sortedFiles, fileItem) {
     sortedFiles.splice(left, 0, fileItem);
 }
 
-/**
- * 并发控制工具函数 - 限制同时执行的Promise数量
- * @param {Array} tasks - 任务数组，每个任务是一个返回Promise的函数
- * @param {number} concurrency - 并发数量
- * @returns {Promise<Array>} 所有任务的结果数组
- */
-async function promiseLimit(tasks, concurrency = BATCH_SIZE) {
-    const results = [];
-    const executing = [];
-    
-    for (let i = 0; i < tasks.length; i++) {
-        const task = tasks[i];
-        const promise = Promise.resolve().then(() => task()).then(result => {
-            results[i] = result;
-            return result;
-        }).finally(() => {
-            const index = executing.indexOf(promise);
-            if (index >= 0) {
-                executing.splice(index, 1);
-            }
-        });
-        
-        executing.push(promise);
-        
-        if (executing.length >= concurrency) {
-            await Promise.race(executing);
-        }
-    }
-    
-    // 等待所有剩余的Promise完成
-    await Promise.all(executing);
-    return results;
-}
 
 /**
  * 保存分块索引到数据库
@@ -1929,8 +1861,6 @@ async function saveChunkedIndex(context, index) {
             chunkSize: chunkSize
         };
         
-        await db.put(INDEX_META_KEY, JSON.stringify(metadata));
-        
         // 保存各个分块
         const savePromises = chunks.map((chunk, chunkId) => {
             const chunkKey = `${INDEX_KEY}_${chunkId}`;
@@ -1938,6 +1868,8 @@ async function saveChunkedIndex(context, index) {
         });
         
         await Promise.all(savePromises);
+        // Only publish the processed-operation watermark after every chunk was saved.
+        await db.put(INDEX_META_KEY, JSON.stringify(metadata));
         
         console.log(`Saved chunked index: ${chunks.length} chunks, ${files.length} total files, ${totalSizeMB.toFixed(2)} MB`);
         return true;
